@@ -1,6 +1,8 @@
 # ISeeYou for Stream Deck
 
-**Toggle ISeeYou** opens the inspector on one press and hides it on the next. **Hold to Show** shows it only while the key is held. If the inspector was already open, releasing the hold returns to that view. Both actions use the current Finder selection when available and keep Finder active.
+**Toggle ISeeYou** opens the inspector on one press and hides it on the next. **Hold to Show** displays a temporary preview. If the inspector was already open, it stays open when the preview ends. Both actions use the current Finder selection when available and keep Finder active.
+
+Select a **Hold to Show** key in Stream Deck to set its **Minimum show time** from 0 to 5 seconds. A quick tap keeps the preview open for the chosen time. With the default of 0 seconds, the preview hides on release.
 
 ## Setup
 

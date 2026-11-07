@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Hold to Show settings</title>
+<style>
+    body { background: #2d2d2d; color: #efefef; font: 13px system-ui, sans-serif; margin: 12px; }
+    label { font-weight: 600; }
+    .heading { display: flex; justify-content: space-between; gap: 8px; }
+    input { width: 100%; margin: 8px 0 0; accent-color: #68c7bb; }
+    p { color: #c8c8c8; margin: 6px 0 0; }
+</style>
+<div class="heading">
+    <label for="minimum">Minimum show time</label>
+    <output id="duration" for="minimum">0.0 s</output>
+</div>
+<input id="minimum" type="range" min="0" max="5000" step="100" value="0"
+       aria-describedby="hint" disabled>
+<p id="hint">A quick tap shows the window for this long. At 0 s, release hides it immediately.</p>
+<script>
+    const slider = document.getElementById("minimum");
+    const duration = document.getElementById("duration");
+
+    function updateLabel() {
+        const seconds = (slider.valueAsNumber / 1000).toFixed(1);
+        duration.value = seconds + " s";
+        slider.setAttribute("aria-valuetext", seconds + " seconds");
+    }
+
+    window.connectElgatoStreamDeckSocket = (port, uuid, event, _info, actionInfo) => {
+        const action = JSON.parse(actionInfo).action;
+        let settings = JSON.parse(actionInfo).payload?.settings ?? {};
+        const socket = new WebSocket("ws://127.0.0.1:" + port);
+        const loadSettings = (next) => {
+            settings = next ?? {};
+            slider.value = Number.isFinite(settings.minimumVisibleMs) ? settings.minimumVisibleMs : 0;
+            updateLabel();
+        };
+
+        loadSettings(settings);
+        socket.addEventListener("open", () => {
+            socket.send(JSON.stringify({ event, uuid }));
+            slider.disabled = false;
+        });
+        socket.addEventListener("close", () => { slider.disabled = true; });
+        socket.addEventListener("message", ({ data }) => {
+            const message = JSON.parse(data);
+            if (message.event === "didReceiveSettings") loadSettings(message.payload.settings);
+        });
+        slider.addEventListener("input", updateLabel);
+        slider.addEventListener("change", () => {
+            settings = { ...settings, minimumVisibleMs: slider.valueAsNumber };
+            socket.send(JSON.stringify({ event: "setSettings", action, context: uuid, payload: settings }));
+        });
+    };
+</script>
+</html>

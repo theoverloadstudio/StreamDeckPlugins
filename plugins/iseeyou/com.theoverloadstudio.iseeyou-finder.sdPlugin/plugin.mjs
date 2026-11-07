@@ -98,6 +98,7 @@ export function connect(socket, registration, toggle = toggleWindow, peek = peek
     function release() {
         const press = held;
         held = undefined;
+        clearTimeout(press?.hideTimer);
         if (!press?.renew) return;
 
         clearInterval(press.renew);
@@ -108,20 +109,47 @@ export function connect(socket, registration, toggle = toggleWindow, peek = peek
         }
     }
 
+    function hideAfterMinimum(press) {
+        if (!press.minimumMs) {
+            release();
+            return;
+        }
+        if (press.shownAt === undefined) return;
+
+        const remaining = press.minimumMs - (performance.now() - press.shownAt);
+        if (remaining <= 0) {
+            release();
+        } else {
+            press.hideTimer = setTimeout(() => {
+                if (held === press) release();
+            }, Math.ceil(remaining));
+        }
+    }
+
     socket.addEventListener("open", () => socket.send(JSON.stringify(registration)));
     socket.addEventListener("close", release);
     socket.addEventListener("message", async ({ data }) => {
-        const { event, action, context, device } = JSON.parse(data);
-        if (held && ((context === held.context && (event === "keyUp" || event === "willDisappear"))
+        const { event, action, context, device, payload } = JSON.parse(data);
+        if (held && ((context === held.context && event === "willDisappear")
             || (device === held.device && event === "deviceDidDisconnect"))) {
             release();
             return;
         }
 
+        if (held && context === held.context && event === "keyUp") {
+            if (!held.released) {
+                held.released = true;
+                hideAfterMinimum(held);
+            }
+            return;
+        }
+
         if (event !== "keyDown") return;
-        if (action === peekAction && held?.context !== context) {
+        if (action === peekAction && (!held || held.context !== context || held.released)) {
             release();
-            const press = { context, device, token: randomUUID() };
+            const minimum = payload?.settings?.minimumVisibleMs;
+            const minimumMs = Number.isFinite(minimum) ? Math.min(5000, Math.max(0, minimum)) : 0;
+            const press = { context, device, minimumMs, token: randomUUID() };
             held = press;
             try {
                 const files = await peek.select();
@@ -138,6 +166,11 @@ export function connect(socket, registration, toggle = toggleWindow, peek = peek
                     }
                 }, 5000);
                 await peek.show();
+                if (held === press) {
+                    // The app protocol has no acknowledgement for the first rendered frame.
+                    press.shownAt = performance.now();
+                    if (press.released) hideAfterMinimum(press);
+                }
             } catch (error) {
                 if (held === press) {
                     release();
