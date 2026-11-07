@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "com.theoverloadstudio.iseeyou-finder",
+  "Name": "ISeeYou",
+  "Author": "The Overload Studio",
+  "Description": "Inspect selected Finder files in ISeeYou.",
+  "Category": "ISeeYou",
+  "CategoryIcon": "images/category",
+  "Icon": "images/plugin",
+  "CodePath": "plugin.mjs",
+  "Version": "1.0.0.0",
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "7.1" },
+  "Nodejs": { "Version": "24" },
+  "OS": [{ "Platform": "mac", "MinimumVersion": "13" }],
+  "Actions": [{
+    "UUID": "com.theoverloadstudio.iseeyou-finder.inspect",
+    "Name": "Inspect Finder Selection",
+    "Tooltip": "Open selected Finder files in the ISeeYou inspector.",
+    "Controllers": ["Keypad"],
+    "Icon": "images/action",
+    "States": [{ "Image": "images/key", "ShowTitle": false }]
+  }]
+}
