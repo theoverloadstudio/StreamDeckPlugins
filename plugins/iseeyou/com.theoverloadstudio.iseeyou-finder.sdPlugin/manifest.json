@@ -3,12 +3,12 @@
   "UUID": "com.theoverloadstudio.iseeyou-finder",
   "Name": "ISeeYou",
   "Author": "The Overload Studio",
-  "Description": "Inspect selected Finder files in ISeeYou.",
+  "Description": "Toggle or temporarily show the ISeeYou inspector from Stream Deck.",
   "Category": "ISeeYou",
   "CategoryIcon": "images/category",
   "Icon": "images/plugin",
   "CodePath": "plugin.mjs",
-  "Version": "1.1.0.0",
+  "Version": "1.2.0.0",
   "SDKVersion": 2,
   "Software": {
     "MinimumVersion": "7.1"
@@ -25,8 +25,8 @@
   "Actions": [
     {
       "UUID": "com.theoverloadstudio.iseeyou-finder.inspect",
-      "Name": "Inspect Finder Selection",
-      "Tooltip": "Open selected Finder files in the ISeeYou inspector.",
+      "Name": "Toggle ISeeYou",
+      "Tooltip": "Press to open or close the ISeeYou window.",
       "Controllers": [
         "Keypad"
       ],
@@ -34,14 +34,15 @@
       "States": [
         {
           "Image": "images/key",
-          "ShowTitle": false
+          "Title": "Toggle",
+          "TitleAlignment": "bottom"
         }
       ]
     },
     {
       "UUID": "com.theoverloadstudio.iseeyou-finder.peek",
-      "Name": "Hold to Inspect",
-      "Tooltip": "Hold to show the current Finder selection. Release to hide.",
+      "Name": "Hold to Show",
+      "Tooltip": "Show ISeeYou while this key is held. Release to hide the temporary view.",
       "Controllers": [
         "Keypad"
       ],
