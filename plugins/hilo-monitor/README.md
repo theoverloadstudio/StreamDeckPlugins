@@ -6,14 +6,9 @@ Add **Dim Monitor** to a fourth key. It fades the two Monitor Out digital channe
 
 Add **Mono Monitor** to average the existing Monitor Out mix into the left speaker and silence the right. Press again to restore the exact stereo mix. Mono leaves the analog volume, output mute, and the separate Dim control in place. Select the key in Stream Deck to set extra mono attenuation from 0 to 24 dB; it defaults to 6 dB and takes effect the next time Mono is enabled. If the routing is changed elsewhere while Mono is on, the plugin preserves the saved stereo mix and warns instead of overwriting those changes.
 
-| Monitor Out range | Tap step |
-| --- | ---: |
-| −71.5 to −30 dB | 6 dB |
-| −30 to −20 dB | 2.5 dB |
-| −20 to −10 dB | 1 dB |
-| −10 to 0 dB | 0.5 dB |
+Single taps use the same series of stops in both directions. Spacing gradually grows from 0.5 dB near unity to as much as 3 dB at quiet levels. A tap from a level between stops goes to the next stop. Quick taps in the same direction move farther, up to 4.5 dB per tap at quiet levels and 1 dB per tap in the top 10 dB. Pausing or reversing direction resets the acceleration. Each change is still a ramp in verified 0.5 dB steps. A busy connection retains only a short, bounded batch of taps; old inputs expire rather than replaying later.
 
-A tap ramps to its target in verified 0.5 dB steps. It stops at a range boundary before continuing in the next range. One up tap from Off ends at −71.5 dB. One down tap from −71.5 dB fades to −95.5 dB and mutes both channels for Off.
+An Up tap from Off unmutes at the current level. A subsequent Up tap brings the level to −71.5 dB. A Down tap at −71.5 dB fades to −95.5 dB and mutes both channels for Off.
 
 Hold either volume key for a continuous ramp that starts gently and accelerates. Volume Down accelerates faster; Volume Up gradually slows as it approaches 0 dB. The hold starts after about a fifth of a second; a shorter press sends one tap step on release. Every half-decibel step is verified over USB. Releasing a hold cancels the ramp, so no further steps are sent. A hold also times out after 3.5 seconds if the release event is missed. Reversing direction or pressing Mute cancels earlier volume input.
 

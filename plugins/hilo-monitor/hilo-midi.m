@@ -135,8 +135,13 @@ static BOOL setValue(MIDIPortRef output, MIDIEndpointRef destination,
     return current == target || receiveValue(output, destination, reg, target, response, lock, reply) == target;
 }
 
+static double smoothstep(double value) {
+    value = MAX(0, MIN(1, value));
+    return value * value * (3 - 2 * value);
+}
+
 static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
-    int current, int target, useconds_t stepDelay, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+    int current, int target, BOOL button, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     const int direction = target > current ? 1 : -1;
     const double deadline = monotonicTime() + 5;
     while (current != target) {
@@ -147,24 +152,24 @@ static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
             return NO;
         }
         current = next;
-        if (current != target) usleep(current < minimumAudible ? 2500 : stepDelay);
+        if (current != target) {
+            const double quiet = smoothstep(((unity - current) * 0.5 - 64) / 19.0);
+            const double nearTop = 1 - smoothstep((unity - current) * 0.5 / 18.0);
+            const double period = button ? 10000 + 12000 * nearTop : 10000;
+            usleep((useconds_t)(period * (1 - quiet) + 2500 * quiet));
+        }
     }
     return !cancelled;
-}
-
-static double smoothstep(double value) {
-    value = MAX(0, MIN(1, value));
-    return value * value * (3 - 2 * value);
 }
 
 static double holdRate(int gain, BOOL up, double elapsed) {
     const double dbBelowUnity = (unity - gain) * 0.5;
     const double ease = smoothstep(elapsed / (up ? 0.38 : 0.28));
-    if (up) {
-        const double range = smoothstep(dbBelowUnity / 26.0);
-        return (6 + 31 * ease) * (0.28 + 0.72 * range);
-    }
-    return 9 + (41 - 9 * smoothstep(dbBelowUnity / 60.0)) * ease;
+    const double range = smoothstep(dbBelowUnity / 26.0);
+    const double rate = up ? (6 + 31 * ease) * (0.28 + 0.72 * range)
+        : 9 + (41 - 9 * smoothstep(dbBelowUnity / 60.0)) * ease;
+    const double quiet = smoothstep((dbBelowUnity - 64) / 19.0);
+    return rate * (1 - quiet) + (0.5 / 0.003) * quiet;
 }
 
 static BOOL holdGain(MIDIPortRef output, MIDIEndpointRef destination, int *current, BOOL up,
@@ -177,7 +182,7 @@ static BOOL holdGain(MIDIPortRef output, MIDIEndpointRef destination, int *curre
         if (!setValue(output, destination, monitorRegister, *current, next, response, lock, reply)) return NO;
         *current = next;
         if (next == end || cancelled) break;
-        const double period = next < minimumAudible ? 0.003 : 0.5 / holdRate(next, up, stepStart - start);
+        const double period = 0.5 / holdRate(next, up, stepStart - start);
         const double remaining = period - (monotonicTime() - stepStart);
         if (remaining > 0) usleep((useconds_t)(remaining * 1e6));
     }
@@ -188,21 +193,34 @@ static int raisedTarget(int current, int steps) {
     return current >= fineRange ? MIN(unity, current + 1) : MIN(fineRange, current + steps);
 }
 
-static int buttonTarget(int current, BOOL up) {
-    if (up && current < minimumAudible) return minimumAudible;
-    if (!up && current <= minimumAudible) return MIN(current, minimumGain);
-    const int boundaries[] = {minimumAudible, 132, 152, 172, unity};
-    const int steps[] = {12, 5, 2, 1};
-    if (up) {
-        for (int i = 0; i < 4; i++) {
-            if (current < boundaries[i + 1]) return MIN(boundaries[i + 1], current + steps[i]);
-        }
-    } else {
-        for (int i = 3; i >= 0; i--) {
-            if (current > boundaries[i]) return MAX(boundaries[i], current - steps[i]);
-        }
+static int adjacentDetent(int current, BOOL up) {
+    // Anchor the same sequence of stops at unity in both directions. This
+    // makes an Up followed by a Down reversible across taper transitions.
+    int high = unity;
+    while (high > minimumAudible) {
+        const double attenuation = (unity - high) * 0.5;
+        const int spacing = 1 + (int)lround(2 * smoothstep((attenuation - 8) / 30.0) +
+            3 * smoothstep((attenuation - 36) / 34.0));
+        const int low = MAX(minimumAudible, high - spacing);
+        if (up && low <= current && current < high) return high;
+        if (!up && low < current && current <= high) return low;
+        high = low;
     }
     return current;
+}
+
+static int buttonTarget(int current, BOOL up, int tier) {
+    if (up && current < minimumAudible) return minimumAudible;
+    if (!up && current <= minimumAudible) return MIN(current, minimumGain);
+    int target = current;
+    for (int i = 0; i < tier; i++) {
+        target = adjacentDetent(target, up);
+    }
+    if (tier == 1) return target;
+    // Rapid taps get at most 4.5 dB each, tapering to 1 dB near unity.
+    const double attenuation = (unity - current) * 0.5;
+    const int cap = 2 + (int)lround(7 * smoothstep((attenuation - 10) / 26.0));
+    return up ? MIN(target, current + cap) : MAX(target, current - cap);
 }
 
 static BOOL validDigitalLevel(int level) {
@@ -287,6 +305,9 @@ int main(int argc, const char **argv) {
         BOOL setDigital = [action isEqualToString:@"set-digital"];
         BOOL readRoute = [action isEqualToString:@"read-route"];
         BOOL setRoute = [action isEqualToString:@"set-route"];
+        BOOL buttonTap = (up || down) && !repeat;
+        int tapTiers[2] = {1, 1};
+        int tapCount = 1;
         int expectedRoute[routeBytes], targetRoute[routeBytes];
         int expectedDigital[2], targetDigital[2];
         if (setRoute && argc == 4) {
@@ -305,6 +326,12 @@ int main(int argc, const char **argv) {
             // imbalance to be repaired by lowering, never while raising.
             if (abs(left) > 30 || abs(right) > 30 ||
                 (left != right && (left < 0 || right < 0 || abs(left - right) > 1))) return 1;
+        } else if (buttonTap && argc >= 2 && argc <= 4) {
+            for (int i = 2; i < argc; i++) {
+                if (argv[i][0] < '1' || argv[i][0] > '3' || argv[i][1]) return 1;
+                tapTiers[i - 2] = argv[i][0] - '0';
+            }
+            tapCount = MAX(1, argc - 2);
         } else if (argc != 2 || setDigital || setRoute) {
             return 1;
         }
@@ -427,7 +454,9 @@ int main(int argc, const char **argv) {
         } else if (readMute) {
             verified = YES;
         } else {
-            if ((up || down) && !repeat) target = buttonTarget(current, up);
+            if (buttonTap) {
+                for (int i = 0; i < tapCount; i++) target = buttonTarget(target, up, tapTiers[i]);
+            }
             else if (steps > 0) target = raisedTarget(current, (int)steps);
             else if (steps < 0) target = (int)MAX(MIN(current, minimumGain), current + steps);
 
@@ -452,7 +481,7 @@ int main(int argc, const char **argv) {
                 if (repeat) {
                     verified = holdGain(output, destination, &target, up, response, lock, &reply);
                 } else {
-                    verified = rampGain(output, destination, current, target, 10000, response, lock, &reply);
+                    verified = rampGain(output, destination, current, target, buttonTap, response, lock, &reply);
                 }
                 if (verified && down && target <= minimumGain) {
                     int muted = requestValue(output, destination, muteRegister, response, lock, &reply);

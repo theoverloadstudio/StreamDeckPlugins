@@ -3,6 +3,8 @@ const holdDelayMs = 220;
 const maxHoldMs = 3500;
 const pulseIntervalMs = 180;
 const volumeInputLifetimeMs = 250;
+const rapidTapMs = 240;
+const maxTapBatch = 2;
 const isMute = command => command === "mute" || command === "force-mute";
 const modes = ["dim", "mono"];
 const isVolume = command => !isMute(command) && !modes.includes(command) && !command.startsWith("read-");
@@ -14,6 +16,8 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     let muteJobs = 0;
     let volumeDirection;
     let volumeGeneration = 0;
+    let tapCadence;
+    let pendingTap;
     const downKeys = new Map();
     const pulses = new Map();
     const modeKeys = new Map();
@@ -58,21 +62,24 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         if (direction !== undefined && volumeDirection === direction) return;
         volumeDirection = direction;
         volumeGeneration++;
+        tapCadence = undefined;
+        pendingTap = undefined;
         if (active && isVolume(active.command)) active.controller.abort();
     }
 
-    function enqueue(command, context, press, trimDb) {
+    function enqueue(command, context, press, trimDb, batch) {
         const generation = volumeGeneration;
         const expires = performance.now() + volumeInputLifetimeMs;
         if (isMute(command)) muteJobs++;
         const job = pending.then(async () => {
+            if (batch && pendingTap === batch) pendingTap = undefined;
             if (socket.readyState !== WebSocket.OPEN || (press && held !== press) ||
                 (muteJobs && !isMute(command)) ||
                 (isVolume(command) && (generation !== volumeGeneration || performance.now() > expires))) return;
             const controller = new AbortController();
             active = { command, context, controller, press };
             try {
-                const result = await adjust(command, controller.signal, trimDb);
+                const result = await adjust(command, controller.signal, trimDb, batch?.tiers);
                 showModeState(result);
                 return result;
             } finally {
@@ -94,10 +101,27 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         return job.catch(() => undefined);
     }
 
+    function tapVolume(direction, context) {
+        const now = performance.now();
+        const tier = tapCadence?.direction === direction && now - tapCadence.at <= rapidTapMs
+            ? Math.min(3, tapCadence.tier + 1) : 1;
+        tapCadence = { direction, at: now, tier };
+        // Start the first tap immediately. While a ramp is busy, keep one
+        // bounded batch with the original expiry rather than a growing queue.
+        if (pendingTap) {
+            if (pendingTap.tiers.length < maxTapBatch) pendingTap.tiers.push(tier);
+            return;
+        }
+        const batch = { tiers: [tier] };
+        pendingTap = batch;
+        enqueue(direction, context, undefined, undefined, batch);
+    }
+
     function scheduleHold(press) {
         press.timer = setTimeout(() => {
             if (held !== press) return;
             press.holding = true;
+            supersedeVolume();
             enqueue(`hold-${press.direction}`, press.context, press);
         }, holdDelayMs);
     }
@@ -122,7 +146,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             if (held?.context === context) {
                 const press = held;
                 stopHold();
-                if (event === "keyUp" && !press.holding && performance.now() - press.startedAt < holdDelayMs && !muteJobs) enqueue(press.direction, context);
+                if (event === "keyUp" && !press.holding && performance.now() - press.startedAt < holdDelayMs && !muteJobs) tapVolume(press.direction, context);
             }
             if (event === "willDisappear") {
                 modeKeys.delete(context);
@@ -142,6 +166,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             if (!muteJobs && Number.isSafeInteger(ticks) && ticks !== 0) {
                 stopHold();
                 supersedeVolume(Math.sign(ticks));
+                tapCadence = undefined;
                 enqueue(Math.max(-10, Math.min(10, ticks)), context);
             }
             return;
@@ -175,6 +200,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             stopHold();
             supersedeVolume(key === "up" ? 1 : -1);
             if (payload?.isInMultiAction) {
+                tapCadence = undefined;
                 enqueue(key, context);
             } else {
                 held = { context, direction: key, holding: false, startedAt: performance.now() };

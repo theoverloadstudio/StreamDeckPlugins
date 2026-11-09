@@ -47,10 +47,10 @@ const mono = createMono(runHelper, join(stateDir, "mono.json"));
 attachMonitorActions(
     new WebSocket(`ws://127.0.0.1:${values.port}`),
     { event: values.registerEvent, uuid: values.pluginUUID },
-    (command, signal, trimDb) => {
+    (command, signal, trimDb, tapTiers) => {
         if (command === "dim" || command === "read-dim") return dim(command === "dim", signal);
         if (command === "mono" || command === "read-mono") return mono(command === "mono", signal, trimDb);
-        return runHelper([command], signal);
+        return runHelper([command, ...(tapTiers ?? [])], signal);
     },
     (error) => console.error("Hilo Monitor:", error.stderr?.trim() ||
         (error.signal ? `USB command stopped (${error.signal}).` : error.message)),

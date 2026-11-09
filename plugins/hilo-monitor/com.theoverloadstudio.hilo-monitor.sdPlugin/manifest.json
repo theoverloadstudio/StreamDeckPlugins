@@ -8,7 +8,7 @@
   "CategoryIcon": "images/category",
   "Icon": "images/plugin",
   "CodePath": "plugin.mjs",
-  "Version": "1.7.0.0",
+  "Version": "1.8.0.0",
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "7.1" },
   "Nodejs": { "Version": "24" },
@@ -17,7 +17,7 @@
     {
       "UUID": "com.theoverloadstudio.hilo-monitor.up",
       "Name": "Monitor Up",
-      "Tooltip": "Raise and unmute Monitor Out. Hold to ramp up to 0 dB.",
+      "Tooltip": "Raise or unmute Monitor Out. Tap quickly to accelerate, or hold to ramp.",
       "Controllers": ["Keypad"],
       "Icon": "images/action",
       "States": [{ "Image": "images/up", "ShowTitle": false }]
@@ -25,7 +25,7 @@
     {
       "UUID": "com.theoverloadstudio.hilo-monitor.down",
       "Name": "Monitor Down",
-      "Tooltip": "Lower Monitor Out. Hold to decrease gradually.",
+      "Tooltip": "Lower Monitor Out. Tap quickly to accelerate, or hold to ramp.",
       "Controllers": ["Keypad"],
       "Icon": "images/action",
       "States": [{ "Image": "images/down", "ShowTitle": false }]

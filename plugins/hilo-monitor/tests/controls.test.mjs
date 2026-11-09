@@ -10,10 +10,10 @@ function harness(t, handle = async () => "ok") {
     const calls = [];
     const faults = [];
     let running = false;
-    attachMonitorActions(socket, {}, async (command, signal) => {
+    attachMonitorActions(socket, {}, async (command, signal, _trim, tiers) => {
         assert.equal(running, false, "hardware calls must not overlap");
         running = true;
-        calls.push({ command, signal });
+        calls.push({ command, signal, tiers });
         try { return await handle(command, signal); }
         finally { running = false; }
     }, error => faults.push(error));
@@ -65,4 +65,44 @@ test("Mute discards earlier Up input and a second Mute cancels an in-flight unmu
     await pause(10);
     assert.deepEqual(calls.map(x => x.command), ["mute", "force-mute", "up"]);
     assert.deepEqual(faults, []);
+});
+
+test("rapid taps accelerate, coalesce into one bounded batch, and reset after a pause", async t => {
+    let finishFirst;
+    const first = new Promise(resolve => { finishFirst = resolve; });
+    let count = 0;
+    const { calls, tap } = harness(t, async () => ++count === 1 ? first : "ok");
+    tap("up");
+    await pause(5);
+    tap("up");
+    tap("up");
+    tap("up");
+    assert.deepEqual(calls.map(x => [x.command, x.tiers]), [["up", [1]]]);
+    finishFirst("ok");
+    await pause(15);
+    assert.deepEqual(calls.map(x => [x.command, x.tiers]), [["up", [1]], ["up", [2, 3]]]);
+    await pause(260);
+    tap("up");
+    await pause(5);
+    tap("up");
+    await pause(5);
+    tap("down");
+    await pause(5);
+    assert.deepEqual(calls.slice(-3).map(x => [x.command, x.tiers]),
+        [["up", [1]], ["up", [2]], ["down", [1]]]);
+});
+
+test("a rapid Up burst never replays after Mute", async t => {
+    const { calls, tap } = harness(t, async (command, signal) => {
+        if (command === "up") await pause(1000, undefined, { signal });
+        return "ok";
+    });
+    tap("up");
+    await pause(5);
+    tap("up");
+    tap("up");
+    tap("mute");
+    await pause(15);
+    assert.equal(calls[0].signal.aborted, true);
+    assert.deepEqual(calls.map(x => x.command), ["up", "mute"]);
 });
