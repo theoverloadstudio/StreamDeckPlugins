@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "com.theoverloadstudio.hilo-monitor",
+  "Name": "Hilo Monitor",
+  "Author": "The Overload Studio",
+  "Description": "Adjust the Lynx Hilo USB analog Monitor Out level.",
+  "Category": "Hilo Monitor",
+  "CategoryIcon": "images/category",
+  "Icon": "images/plugin",
+  "CodePath": "plugin.mjs",
+  "Version": "1.0.0.0",
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "7.1" },
+  "Nodejs": { "Version": "24" },
+  "OS": [{ "Platform": "mac", "MinimumVersion": "13" }],
+  "Actions": [
+    {
+      "UUID": "com.theoverloadstudio.hilo-monitor.up",
+      "Name": "Monitor Volume Up",
+      "Tooltip": "Raise Analog Monitor Out by 0.5 dB.",
+      "Controllers": ["Keypad"],
+      "Icon": "images/action",
+      "States": [{ "Image": "images/up", "ShowTitle": false }]
+    },
+    {
+      "UUID": "com.theoverloadstudio.hilo-monitor.down",
+      "Name": "Monitor Volume Down",
+      "Tooltip": "Lower Analog Monitor Out by 0.5 dB.",
+      "Controllers": ["Keypad"],
+      "Icon": "images/action",
+      "States": [{ "Image": "images/down", "ShowTitle": false }]
+    },
+    {
+      "UUID": "com.theoverloadstudio.hilo-monitor.dial",
+      "Name": "Monitor Volume Dial",
+      "Tooltip": "Turn to adjust Analog Monitor Out in 0.5 dB steps.",
+      "Controllers": ["Encoder"],
+      "Encoder": {
+        "Icon": "images/action",
+        "layout": "$B1",
+        "TriggerDescription": { "Rotate": "Adjust Monitor Out" }
+      },
+      "Icon": "images/action",
+      "States": [{ "Image": "images/dial", "Title": "Monitor Out" }]
+    }
+  ]
+}
