@@ -1,3 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 24 24">
-  <g color="#fff"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M16 8q5 4 0 8"/></g></g>
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 72 72">
+  <rect x="2" y="2" width="68" height="68" rx="7" fill="#a68c68" stroke="#dcc5a2" stroke-width="2"/>
+  <rect x="8" y="8" width="56" height="56" rx="5" fill="#24231d" stroke="#594432"/>
+  <path d="M16 47l4-2m-5-9h4m0-11 4 2m3-8 2 4m8-7v5m10-2-2 4m9 2-4 2m8 9h-4m3 11-4-2" stroke="#d2ba91" stroke-width="1.7" stroke-linecap="round"/>
+  <circle cx="36" cy="37" r="15" fill="#4b4033" stroke="#c1a784" stroke-width="2"/>
+  <circle cx="36" cy="37" r="11" fill="#332e26" stroke="#77654d"/>
+  <path d="M36 34V25" stroke="#f0d9ac" stroke-width="2.4" stroke-linecap="round"/>
+  <text x="36" y="59" fill="#ead5af" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="7" letter-spacing="1">LEVEL</text>
 </svg>

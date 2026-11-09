@@ -1,5 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 24 24">
-  <rect width="24" height="24" rx="3" fill="#bb3342"/>
-  <path d="M4 9h4l5-4v14l-5-4H4z" fill="#fff"/>
-  <path d="M16 9l6 6m0-6l-6 6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72">
+  <defs>
+    <linearGradient id="metal" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#dac5a1"/><stop offset=".47" stop-color="#9b8567"/><stop offset="1" stop-color="#69533d"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="70" height="70" rx="8" fill="#231914"/>
+  <rect x="3" y="3" width="66" height="66" rx="6" fill="url(#metal)" stroke="#d5bc97"/>
+  <rect x="8" y="8" width="56" height="56" rx="4" fill="#25241f" stroke="#42372b"/>
+  <path d="M11 13h50m-50 46h50" stroke="#635442"/>
+  <circle cx="14" cy="16" r="1.4" fill="#a58b6f"/><circle cx="58" cy="16" r="1.4" fill="#a58b6f"/>
+  <path d="M19 24v4m34-4v4m-36 5v4m38-4v4m-36 5v4m34-4v4" stroke="#b2a081" stroke-width="1.3"/>
+  <circle cx="36" cy="35" r="16" fill="#161714" stroke="#ff9791" stroke-width="1.5"/>
+  <circle cx="36" cy="35" r="13" fill="#a83d40" stroke="#1b1d17"/>
+  <path d="M28 29a10 10 0 0 1 15-1" fill="none" stroke="#f1e0b7" opacity=".38" stroke-width="1.2" stroke-linecap="round"/>
+  <g fill="none" stroke="#fff0d0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M25 40V30l5 5 5-5v10m4-10 10 10m0-10L39 40"/></g>
+  <rect x="32" y="11" width="8" height="3" rx="1.5" fill="#ff9791"/>
+  <text x="36" y="59" fill="#ead5af" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="7" letter-spacing="1">MUTE</text>
 </svg>

@@ -1,6 +1,6 @@
 # Hilo Monitor for Stream Deck
 
-Control the analog speaker level of a Lynx Hilo connected over USB. Add **Monitor Up** (green), **Monitor Down** (orange), and **Mute Monitor** (red) to three keys. The keys pulse while held. Mute toggles both Monitor Out channels. Monitor Up also clears the Monitor Out mute. If either key unmutes above −30 dB, it first lowers and verifies the level at −30 dB.
+Control the analog speaker level of a Lynx Hilo connected over USB. Add **Monitor Up** (green), **Monitor Down** (orange), and **Mute Monitor** (red) to three keys. The keys pulse while held. Mute toggles both Monitor Out channels. Monitor Up also clears the Monitor Out mute. When either key unmutes, the level fades in from Off to the intended setting, capped at −30 dB.
 
 | Monitor Out range | Tap step |
 | --- | ---: |
@@ -9,9 +9,9 @@ Control the analog speaker level of a Lynx Hilo connected over USB. Add **Monito
 | −20 to −10 dB | 1 dB |
 | −10 to 0 dB | 0.5 dB |
 
-A tap lands on a range boundary before continuing in the next range. One up tap from Off starts at −71.5 dB. One down tap from −71.5 dB turns the level Off.
+A tap ramps to its target in verified 0.5 dB steps. It stops at a range boundary before continuing in the next range. One up tap from Off ends at −71.5 dB. One down tap from −71.5 dB turns the level Off.
 
-Hold either volume key to ramp at up to 1.5 dB per repeat, tapering to 0.5 dB steps in the last 10 dB. From Off, a held up press targets about 2.4 seconds to reach 0 dB. Release the key to stop repeating. Mute cancels pending volume changes.
+Hold either volume key for continuous changes. The ramp slows in the last 10 dB, and USB verification can lengthen the full sweep. Release the key to stop repeating. Mute interrupts an active volume ramp and cancels pending volume changes.
 
 The optional **Monitor Volume Dial** uses the Stream Deck + encoder, with 0.5 dB per tick and a maximum of 5 dB per event. Upward turns above −10 dB are limited to 0.5 dB per event. The plugin reads the hardware level before adjusting it and caps increases at 0 dB.
 

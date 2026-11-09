@@ -6,6 +6,7 @@ const pulseIntervalMs = 180;
 export function attachMonitorActions(socket, registration, adjust, reportError) {
     let pending = Promise.resolve();
     let held;
+    let active;
     let volumeGeneration = 0;
     const pulses = new Map();
 
@@ -35,18 +36,26 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
 
     function stopHold() {
         clearTimeout(held?.timer);
+        if (active?.repeat) active.controller.abort();
         held = undefined;
     }
 
-    function enqueue(command, context, isCurrent = () => true) {
+    function enqueue(command, context, press) {
         const generation = volumeGeneration;
-        const job = pending.then(() => {
-            if (socket.readyState === WebSocket.OPEN && isCurrent() &&
+        const job = pending.then(async () => {
+            if (socket.readyState === WebSocket.OPEN && (!press || held === press) &&
                 (command === "mute" || generation === volumeGeneration)) {
-                return adjust(command);
+                const controller = new AbortController();
+                active = { command, context, controller, repeat: !!press };
+                try {
+                    return await adjust(command, controller.signal);
+                } finally {
+                    active = undefined;
+                }
             }
         });
         pending = job.catch((error) => {
+            if (error.name === "AbortError") return;
             if (held?.context === context) stopHold();
             reportError(error);
             if (socket.readyState === WebSocket.OPEN && typeof context === "string") {
@@ -64,7 +73,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             const result = await enqueue(
                 `hold-${press.direction}`,
                 press.context,
-                () => held === press,
+                press,
             );
             if (held === press && result !== undefined && result !== "Limit") {
                 const elapsed = performance.now() - startedAt;
@@ -76,14 +85,19 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     socket.addEventListener("open", () => socket.send(JSON.stringify(registration)));
     socket.addEventListener("close", () => {
         stopHold();
+        active?.controller.abort();
         for (const context of pulses.keys()) stopPulse(context);
     });
     socket.addEventListener("message", ({ data }) => {
         const { event, action, context, device, payload } = JSON.parse(data);
         if (event === "keyUp" || event === "willDisappear") stopPulse(context);
+        if (event === "willDisappear" && active?.context === context) active.controller.abort();
         if (event === "deviceDidDisconnect") {
             for (const [key, pulse] of pulses) {
-                if (pulse.device === device) stopPulse(key);
+                if (pulse.device === device) {
+                    if (active?.context === key) active.controller.abort();
+                    stopPulse(key);
+                }
             }
         }
         if (held && ((held.context === context && (event === "keyUp" || event === "willDisappear"))
@@ -109,14 +123,18 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
 
         if (key === "mute") {
             stopHold();
+            if (active && active.command !== "mute") active.controller.abort();
             volumeGeneration++;
             enqueue("mute", context);
         } else {
             stopHold();
-            const press = { context, device, direction: key };
+            const press = { context, device, direction: key, startedAt: performance.now() };
             if (!payload?.isInMultiAction) held = press;
             enqueue(key, context).then((result) => {
-                if (result !== undefined) scheduleRepeat(press, holdDelayMs + repeatIntervalMs);
+                if (result !== undefined) {
+                    const elapsed = performance.now() - press.startedAt;
+                    scheduleRepeat(press, Math.max(0, holdDelayMs + repeatIntervalMs - elapsed));
+                }
             });
         }
     });
