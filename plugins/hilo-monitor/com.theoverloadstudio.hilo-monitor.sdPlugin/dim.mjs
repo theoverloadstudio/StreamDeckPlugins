@@ -53,7 +53,7 @@ export function createDim(run, stateFile) {
             const target = dimmed(normal);
             const offsets = current.map((value, channel) => value - normal[channel]);
             if (phase !== "on" && current.every((value, channel) => value >= normal[channel] && value <= target[channel]) &&
-                Math.abs(offsets[0] - offsets[1]) <= 1) {
+                Math.abs(offsets[0] - offsets[1]) <= 2) {
                 // After interruption, finish dimming first. An explicit
                 // second press can then bring both channels back up together.
                 await save(normal, "applying");

@@ -303,12 +303,23 @@ static BOOL rampDigital(MIDIPortRef output, MIDIEndpointRef destination, int cur
     dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     const double deadline = monotonicTime() + 5;
     const BOOL dimming = target[0] >= current[0] && target[1] >= current[1];
-    const useconds_t stepPause = dimming ? 5000 : 10000;
+    const useconds_t stepPause = dimming ? 7000 : 10000;
+    const int leftRemaining = target[0] - current[0];
+    const int rightRemaining = target[1] - current[1];
+    if (dimming && leftRemaining != rightRemaining) {
+        // Catch up the lagging channel before advancing another pair.
+        const int channel = leftRemaining > rightRemaining ? 0 : 1;
+        const int next = current[channel] + abs(leftRemaining - rightRemaining);
+        if (cancelled || !setValue(output, destination, monitorDigital[channel], current[channel], next,
+            response, lock, reply)) return NO;
+        current[channel] = next;
+    }
     while (current[0] != target[0] || current[1] != target[1]) {
         if (cancelled || monotonicTime() >= deadline) return NO;
         for (int channel = 0; channel < 2; channel++) {
             if (current[channel] == target[channel]) continue;
-            const int next = current[channel] + (current[channel] < target[channel] ? 1 : -1);
+            // Attenuate in 1 dB steps. Return to the listening level in 0.5 dB steps.
+            const int next = dimming ? MIN(current[channel] + 2, target[channel]) : current[channel] - 1;
             if (!setValue(output, destination, monitorDigital[channel], current[channel], next, response, lock, reply)) {
                 return NO;
             }
@@ -364,10 +375,10 @@ int main(int argc, const char **argv) {
             }
             const int left = targetDigital[0] - expectedDigital[0];
             const int right = targetDigital[1] - expectedDigital[1];
-            // An interrupted pair may be half a dB out of sync. Allow the
+            // An interrupted pair may be one dB out of sync. Allow the
             // imbalance to be repaired by lowering, never while raising.
             if (abs(left) > 30 || abs(right) > 30 ||
-                (left != right && (left < 0 || right < 0 || abs(left - right) > 1))) return 1;
+                (left != right && (left < 0 || right < 0 || abs(left - right) > 2))) return 1;
         } else if (buttonTap && argc >= 2 && argc <= 4) {
             for (int i = 2; i < argc; i++) {
                 if (argv[i][0] < '1' || argv[i][0] > '3' || argv[i][1]) return 1;

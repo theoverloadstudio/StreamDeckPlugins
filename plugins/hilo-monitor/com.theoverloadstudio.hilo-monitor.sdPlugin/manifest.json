@@ -8,7 +8,7 @@
   "CategoryIcon": "images/category",
   "Icon": "images/plugin",
   "CodePath": "plugin.mjs",
-  "Version": "1.11.1.0",
+  "Version": "1.11.2.0",
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "7.1" },
   "Nodejs": { "Version": "24" },
