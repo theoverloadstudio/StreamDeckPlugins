@@ -1,11 +1,37 @@
 const pluginId = "com.theoverloadstudio.hilo-monitor";
-const holdDelayMs = 200;
-// The helper moves 1.5 dB per repeat, covering 71.5 dB in about 2.3 seconds.
-const repeatIntervalMs = 48;
+const holdDelayMs = 125;
+const repeatIntervalMs = 37;
+const pulseIntervalMs = 180;
 
 export function attachMonitorActions(socket, registration, adjust, reportError) {
     let pending = Promise.resolve();
     let held;
+    let volumeGeneration = 0;
+    const pulses = new Map();
+
+    function setImage(context, image) {
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ event: "setImage", context, payload: { image } }));
+        }
+    }
+
+    function startPulse(context, device, key) {
+        let bright = true;
+        setImage(context, `images/${key}-pulse.svg`);
+        const timer = setInterval(() => {
+            bright = !bright;
+            setImage(context, `images/${key}${bright ? "-pulse" : ""}.svg`);
+        }, pulseIntervalMs);
+        pulses.set(context, { device, timer });
+    }
+
+    function stopPulse(context) {
+        const pulse = pulses.get(context);
+        if (!pulse) return;
+        clearInterval(pulse.timer);
+        pulses.delete(context);
+        setImage(context);
+    }
 
     function stopHold() {
         clearTimeout(held?.timer);
@@ -13,8 +39,10 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     }
 
     function enqueue(command, context, isCurrent = () => true) {
+        const generation = volumeGeneration;
         const job = pending.then(() => {
-            if (socket.readyState === WebSocket.OPEN && isCurrent()) {
+            if (socket.readyState === WebSocket.OPEN && isCurrent() &&
+                (command === "mute" || generation === volumeGeneration)) {
                 return adjust(command);
             }
         });
@@ -46,9 +74,18 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     }
 
     socket.addEventListener("open", () => socket.send(JSON.stringify(registration)));
-    socket.addEventListener("close", stopHold);
+    socket.addEventListener("close", () => {
+        stopHold();
+        for (const context of pulses.keys()) stopPulse(context);
+    });
     socket.addEventListener("message", ({ data }) => {
         const { event, action, context, device, payload } = JSON.parse(data);
+        if (event === "keyUp" || event === "willDisappear") stopPulse(context);
+        if (event === "deviceDidDisconnect") {
+            for (const [key, pulse] of pulses) {
+                if (pulse.device === device) stopPulse(key);
+            }
+        }
         if (held && ((held.context === context && (event === "keyUp" || event === "willDisappear"))
             || (held.device === device && event === "deviceDidDisconnect"))) {
             stopHold();
@@ -65,17 +102,20 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         }
         if (event !== "keyDown") return;
 
-        if (action === `${pluginId}.mute`) {
-            stopHold();
-            enqueue("mute", context);
-        } else if (action === `${pluginId}.up` || action === `${pluginId}.down`) {
-            if (held?.context === context) return;
+        const key = action?.startsWith(`${pluginId}.`) ? action.slice(pluginId.length + 1) : "";
+        if (key !== "up" && key !== "down" && key !== "mute") return;
+        if (pulses.has(context)) return;
+        if (!payload?.isInMultiAction && typeof context === "string") startPulse(context, device, key);
 
+        if (key === "mute") {
             stopHold();
-            const direction = action === `${pluginId}.up` ? "up" : "down";
-            const press = { context, device, direction };
+            volumeGeneration++;
+            enqueue("mute", context);
+        } else {
+            stopHold();
+            const press = { context, device, direction: key };
             if (!payload?.isInMultiAction) held = press;
-            enqueue(direction, context).then((result) => {
+            enqueue(key, context).then((result) => {
                 if (result !== undefined) scheduleRepeat(press, holdDelayMs + repeatIntervalMs);
             });
         }

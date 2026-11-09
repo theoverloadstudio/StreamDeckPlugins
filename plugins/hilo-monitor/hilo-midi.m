@@ -9,6 +9,8 @@ static const int monitorMuteMask = 0x30; // Monitor Out left and right
 static const int unity = 192;
 static const int minimumAudible = 49; // -71.5 dB
 static const int holdStep = 3; // 1.5 dB
+static const int fineRange = 172; // -10 dB
+static const int unmuteCeiling = 132; // -30 dB
 
 typedef struct {
     unsigned reg;
@@ -96,11 +98,22 @@ static int requestValue(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef s
     return result;
 }
 
+static BOOL setValue(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef source, MIDIEndpointRef destination,
+    unsigned reg, int current, int target, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+    return current == target || (sendRegister(output, destination, reg, YES, (UInt8)target) == noErr &&
+        requestValue(input, output, source, destination, reg, response, lock, reply) == target);
+}
+
+static int raisedTarget(int current, int steps) {
+    return current >= fineRange ? MIN(unity, current + 1) : MIN(fineRange, current + steps);
+}
+
 static int buttonTarget(int current, BOOL up, BOOL repeat) {
     if (up && current < minimumAudible) return minimumAudible;
     if (!up && current <= minimumAudible) return 0;
     if (repeat) {
-        return up ? MIN(unity, current + holdStep) : MAX(minimumAudible, current - holdStep);
+        if (up) return raisedTarget(current, holdStep);
+        return current > fineRange ? current - 1 : MAX(minimumAudible, current - holdStep);
     }
     const int boundaries[] = {minimumAudible, 132, 152, 172, unity};
     const int steps[] = {12, 5, 2, 1};
@@ -190,30 +203,41 @@ int main(int argc, const char **argv) {
         if (mute) {
             target = (current & monitorMuteMask) == monitorMuteMask
                 ? current & ~monitorMuteMask : current | monitorMuteMask;
+            if (!(target & monitorMuteMask)) {
+                int gain = requestValue(input, output, source, destination, monitorRegister, response, lock, &reply);
+                if (gain < 0 || gain > unity ||
+                    !setValue(input, output, source, destination, monitorRegister, gain, MIN(gain, unmuteCeiling), response, lock, &reply)) {
+                    fprintf(stderr, "Cannot verify a safe Monitor Out level for unmute.\n");
+                    MIDIClientDispose(client);
+                    return 1;
+                }
+            }
         }
         else if (up || down) target = buttonTarget(current, up, repeat);
-        else if (steps) target = (int)MIN(unity, MAX(0, current + steps));
-        if (target != current && sendRegister(output, destination, reg, YES, (UInt8)target) != noErr) {
-            fprintf(stderr, "Cannot adjust the Hilo Monitor Out level.\n");
-            MIDIClientDispose(client);
-            return 1;
-        }
-        if (target != current && requestValue(input, output, source, destination, reg, response, lock, &reply) != target) {
-            fprintf(stderr, "Cannot confirm the new Hilo Monitor Out level.\n");
-            MIDIClientDispose(client);
-            return 1;
-        }
+        else if (steps > 0) target = raisedTarget(current, (int)steps);
+        else if (steps < 0) target = (int)MAX(0, current + steps);
+
+        int muteState = 0;
         if (up && !repeat) {
-            // Confirm the new gain before restoring audio, and preserve other outputs' mute bits.
-            int muteState = requestValue(input, output, source, destination, muteRegister, response, lock, &reply);
-            if (muteState < 0 || ((muteState & monitorMuteMask) &&
-                (sendRegister(output, destination, muteRegister, YES, (UInt8)(muteState & ~monitorMuteMask)) != noErr ||
-                requestValue(input, output, source, destination, muteRegister, response, lock, &reply)
-                    != (muteState & ~monitorMuteMask)))) {
-                fprintf(stderr, "Cannot verify that Hilo Monitor Out is unmuted.\n");
+            muteState = requestValue(input, output, source, destination, muteRegister, response, lock, &reply);
+            if (muteState < 0) {
+                fprintf(stderr, "Cannot read the Hilo Monitor Out mute state.\n");
                 MIDIClientDispose(client);
                 return 1;
             }
+            if (muteState & monitorMuteMask) target = MIN(target, unmuteCeiling);
+        }
+
+        if (!setValue(input, output, source, destination, reg, current, target, response, lock, &reply)) {
+            fprintf(stderr, "Cannot confirm the new Hilo Monitor Out state.\n");
+            MIDIClientDispose(client);
+            return 1;
+        }
+        if ((muteState & monitorMuteMask) &&
+            !setValue(input, output, source, destination, muteRegister, muteState, muteState & ~monitorMuteMask, response, lock, &reply)) {
+            fprintf(stderr, "Cannot verify that Hilo Monitor Out is unmuted.\n");
+            MIDIClientDispose(client);
+            return 1;
         }
         if (reg == muteRegister) puts((target & monitorMuteMask) == monitorMuteMask ? "Muted" : "Unmuted");
         else if (repeat && (target == current || (up && target == unity) || (down && !target))) puts("Limit");
