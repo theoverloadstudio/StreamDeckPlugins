@@ -7,6 +7,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     let pending = Promise.resolve();
     let held;
     let active;
+    let volumeDirection;
     let volumeGeneration = 0;
     const pulses = new Map();
 
@@ -40,6 +41,13 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         held = undefined;
     }
 
+    function supersedeVolume(direction) {
+        if (direction !== undefined && volumeDirection === direction) return;
+        volumeDirection = direction;
+        volumeGeneration++;
+        if (active && active.command !== "mute") active.controller.abort();
+    }
+
     function enqueue(command, context, press) {
         const generation = volumeGeneration;
         const job = pending.then(async () => {
@@ -55,8 +63,9 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             }
         });
         pending = job.catch((error) => {
-            if (error.name === "AbortError") return;
-            if (held?.context === context) stopHold();
+            if (error.name === "AbortError" ||
+                (command !== "mute" && generation !== volumeGeneration)) return;
+            if (held && held.context === context && (!press || held === press)) stopHold();
             reportError(error);
             if (socket.readyState === WebSocket.OPEN && typeof context === "string") {
                 socket.send(JSON.stringify({ event: "showAlert", context }));
@@ -110,6 +119,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             const ticks = payload?.ticks;
             if (Number.isSafeInteger(ticks) && ticks !== 0) {
                 stopHold();
+                supersedeVolume(Math.sign(ticks));
                 enqueue(Math.max(-10, Math.min(10, ticks)), context);
             }
             return;
@@ -123,11 +133,11 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
 
         if (key === "mute") {
             stopHold();
-            if (active && active.command !== "mute") active.controller.abort();
-            volumeGeneration++;
+            supersedeVolume();
             enqueue("mute", context);
         } else {
             stopHold();
+            supersedeVolume(key === "up" ? 1 : -1);
             const press = { context, device, direction: key, startedAt: performance.now() };
             if (!payload?.isInMultiAction) held = press;
             enqueue(key, context).then((result) => {

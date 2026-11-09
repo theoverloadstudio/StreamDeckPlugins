@@ -17,6 +17,8 @@ static const int unmuteCeiling = 132; // -30 dB
 typedef struct {
     unsigned reg;
     int value;
+    int expected;
+    BOOL armed;
 } RegisterReply;
 
 static BOOL isHiloEndpoint(MIDIEndpointRef endpoint) {
@@ -82,37 +84,48 @@ static int registerValue(const UInt8 *message, size_t length, unsigned reg) {
     return (message[10] << 1) | (message[11] >> 6);
 }
 
-static int requestValue(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef source, MIDIEndpointRef destination,
-    unsigned reg, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+static int receiveValue(MIDIPortRef output, MIDIEndpointRef destination, unsigned reg, int expected,
+    dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     [lock lock];
+    dispatch_semaphore_wait(response, DISPATCH_TIME_NOW);
     reply->reg = reg;
     reply->value = -1;
+    reply->expected = expected;
+    reply->armed = YES;
     [lock unlock];
-    if (MIDIPortConnectSource(input, source, NULL) != noErr) return -1;
-    int result = -1;
-    if (sendRegister(output, destination, reg, NO, 0) == noErr &&
-        dispatch_semaphore_wait(response, dispatch_time(DISPATCH_TIME_NOW, 750 * NSEC_PER_MSEC)) == 0) {
-        [lock lock];
-        result = reply->value;
-        [lock unlock];
+    // A write is sent at most once. If a stale reply arrives, read the register
+    // again and keep the ramp stopped until this exact half-decibel is confirmed.
+    if (expected < 0 || sendRegister(output, destination, reg, YES, (UInt8)expected) == noErr) {
+        const int waitMs = expected < 0 ? 250 : 80;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (sendRegister(output, destination, reg, NO, 0) != noErr) break;
+            if (dispatch_semaphore_wait(response, dispatch_time(DISPATCH_TIME_NOW, waitMs * NSEC_PER_MSEC)) == 0) break;
+        }
     }
-    MIDIPortDisconnectSource(input, source);
+    [lock lock];
+    int result = reply->value;
+    reply->armed = NO;
+    [lock unlock];
     return result;
 }
 
-static BOOL setValue(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef source, MIDIEndpointRef destination,
-    unsigned reg, int current, int target, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
-    return current == target || (sendRegister(output, destination, reg, YES, (UInt8)target) == noErr &&
-        requestValue(input, output, source, destination, reg, response, lock, reply) == target);
+static int requestValue(MIDIPortRef output, MIDIEndpointRef destination,
+    unsigned reg, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+    return receiveValue(output, destination, reg, -1, response, lock, reply);
 }
 
-static BOOL rampGain(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef source, MIDIEndpointRef destination,
+static BOOL setValue(MIDIPortRef output, MIDIEndpointRef destination,
+    unsigned reg, int current, int target, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+    return current == target || receiveValue(output, destination, reg, target, response, lock, reply) == target;
+}
+
+static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
     int current, int target, useconds_t stepDelay, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     const int direction = target > current ? 1 : -1;
     while (current != target) {
         const int next = current + direction;
 
-        if (!setValue(input, output, source, destination, monitorRegister, current, next, response, lock, reply)) {
+        if (!setValue(output, destination, monitorRegister, current, next, response, lock, reply)) {
             return NO;
         }
         current = next;
@@ -121,15 +134,15 @@ static BOOL rampGain(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef sour
     return YES;
 }
 
-static BOOL fadeIn(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef source, MIDIEndpointRef destination,
+static BOOL fadeIn(MIDIPortRef output, MIDIEndpointRef destination,
     int gain, int targetGain, int muteState, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     const int start = 0; // Restore audio with the analog gain at Off.
     const BOOL atStart = (muteState & monitorMuteMask) == monitorMuteMask
-        ? setValue(input, output, source, destination, monitorRegister, gain, start, response, lock, reply)
-        : rampGain(input, output, source, destination, gain, start, 6500, response, lock, reply);
+        ? setValue(output, destination, monitorRegister, gain, start, response, lock, reply)
+        : rampGain(output, destination, gain, start, 6500, response, lock, reply);
     return atStart &&
-        setValue(input, output, source, destination, muteRegister, muteState, muteState & ~monitorMuteMask, response, lock, reply) &&
-        rampGain(input, output, source, destination, start, targetGain, 7500, response, lock, reply);
+        setValue(output, destination, muteRegister, muteState, muteState & ~monitorMuteMask, response, lock, reply) &&
+        rampGain(output, destination, start, targetGain, 7500, response, lock, reply);
 }
 
 static int raisedTarget(int current, int steps) {
@@ -204,7 +217,8 @@ int main(int argc, const char **argv) {
                         if (value == 0xf7) {
                             [lock lock];
                             int parsed = registerValue(parser.message, parser.length, reply.reg);
-                            if (parsed >= 0 && reply.value < 0) {
+                            if (reply.armed && parsed >= 0 && reply.value < 0 &&
+                                (reply.expected < 0 || parsed == reply.expected)) {
                                 reply.value = parsed;
                                 dispatch_semaphore_signal(response);
                             }
@@ -215,13 +229,13 @@ int main(int argc, const char **argv) {
                     packet = MIDIPacketNext(packet);
                 }
             });
-        if (status != noErr) {
+        if (status != noErr || MIDIPortConnectSource(input, source, NULL) != noErr) {
             fprintf(stderr, "Cannot open the Hilo MIDI input.\n");
             MIDIClientDispose(client);
             return 1;
         }
 
-        int current = requestValue(input, output, source, destination, reg, response, lock, &reply);
+        int current = requestValue(output, destination, reg, response, lock, &reply);
         if (current < 0 || (reg == monitorRegister && current > unity)) {
             fprintf(stderr, "Cannot verify the Hilo Monitor Out state.\n");
             MIDIClientDispose(client);
@@ -233,11 +247,11 @@ int main(int argc, const char **argv) {
             target = (current & monitorMuteMask) == monitorMuteMask
                 ? current & ~monitorMuteMask : current | monitorMuteMask;
             if (!(target & monitorMuteMask)) {
-                int gain = requestValue(input, output, source, destination, monitorRegister, response, lock, &reply);
+                int gain = requestValue(output, destination, monitorRegister, response, lock, &reply);
                 verified = gain >= 0 && gain <= unity &&
-                    fadeIn(input, output, source, destination, gain, MIN(gain, unmuteCeiling), current, response, lock, &reply);
+                    fadeIn(output, destination, gain, MIN(gain, unmuteCeiling), current, response, lock, &reply);
             } else {
-                verified = setValue(input, output, source, destination, reg, current, target, response, lock, &reply);
+                verified = setValue(output, destination, reg, current, target, response, lock, &reply);
             }
         } else if (readMute) {
             verified = YES;
@@ -247,7 +261,7 @@ int main(int argc, const char **argv) {
             else if (steps < 0) target = (int)MAX(0, current + steps);
 
             int muteState = up && !repeat
-                ? requestValue(input, output, source, destination, muteRegister, response, lock, &reply) : 0;
+                ? requestValue(output, destination, muteRegister, response, lock, &reply) : 0;
             if (muteState < 0) {
                 fprintf(stderr, "Cannot read the Hilo Monitor Out mute state.\n");
                 MIDIClientDispose(client);
@@ -255,10 +269,10 @@ int main(int argc, const char **argv) {
             }
             if (muteState & monitorMuteMask) {
                 target = MIN(target, unmuteCeiling);
-                verified = fadeIn(input, output, source, destination, current, target, muteState, response, lock, &reply);
+                verified = fadeIn(output, destination, current, target, muteState, response, lock, &reply);
             } else {
                 const useconds_t stepDelay = repeat ? (down ? 3000 : 6500) : 10000;
-                verified = rampGain(input, output, source, destination, current, target, stepDelay,
+                verified = rampGain(output, destination, current, target, stepDelay,
                     response, lock, &reply);
             }
         }
