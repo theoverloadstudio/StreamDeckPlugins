@@ -40,21 +40,22 @@ export function createDim(run, stateFile) {
 
         const current = (await run(["read-digital"], signal)).split(" ").map(Number);
         if (!validLevels(current)) throw new Error("Cannot read the Monitor Out digital levels.");
-        const on = normal && !equal(normal, current) && equal(dimmed(normal), current);
-        if (!request) return on ? "Dim On" : "Dim Off";
-
-        if (normal && !on && !equal(normal, current)) {
+        const changed = normal && !equal(normal, current);
+        const on = changed && equal(dimmed(normal), current);
+        if (changed && !on) {
             const target = dimmed(normal);
             const offsets = current.map((value, channel) => value - normal[channel]);
             const interrupted = phase !== "on" &&
                 current.every((value, channel) => value >= normal[channel] && value <= target[channel]) &&
                 Math.abs(offsets[0] - offsets[1]) <= 2;
+            if (!request) return interrupted ? "Dim On" : "Dim Off";
             if (!interrupted) {
                 // An unrelated hardware change must never restore an old level.
                 await rm(stateFile, { force: true });
                 throw new Error("Monitor Out digital levels changed. Press Dim again to use the current levels.");
             }
         }
+        if (!request) return on ? "Dim On" : "Dim Off";
 
         signal.throwIfAborted();
         const engage = request === true ? !on : request === "on";

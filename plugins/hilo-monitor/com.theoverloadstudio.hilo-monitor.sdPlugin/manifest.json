@@ -8,7 +8,7 @@
   "CategoryIcon": "images/category",
   "Icon": "images/plugin",
   "CodePath": "plugin.mjs",
-  "Version": "1.11.3.0",
+  "Version": "1.11.4.0",
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "7.1" },
   "Nodejs": { "Version": "24" },
@@ -17,7 +17,7 @@
     {
       "UUID": "com.theoverloadstudio.hilo-monitor.up",
       "Name": "Monitor Up",
-      "Tooltip": "Raise or unmute Monitor Out. Tap quickly to accelerate, or hold to ramp.",
+      "Tooltip": "Clear Dim first, then raise or unmute Monitor Out. Tap quickly to accelerate, or hold to ramp.",
       "Controllers": ["Keypad"],
       "Icon": "images/action",
       "States": [{ "Image": "images/up", "ShowTitle": false }]

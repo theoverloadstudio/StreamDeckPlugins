@@ -54,6 +54,7 @@ test("an explicit Off restores the original levels from a partially engaged fade
     const dim = createDim(run, join(dir, "dim.json"));
     const signal = new AbortController().signal;
     await assert.rejects(dim("on", signal), /Interrupted/);
+    assert.equal(await dim(false, signal), "Dim On");
     assert.equal(await dim("off", signal), "Dim Off");
     assert.deepEqual(levels, [24, 28]);
     assert.equal(await dim(false, signal), "Dim Off");

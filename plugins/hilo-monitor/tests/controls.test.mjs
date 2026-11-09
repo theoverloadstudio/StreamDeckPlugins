@@ -15,7 +15,10 @@ function harness(t, handle = async () => "ok") {
         assert.equal(running, false, "hardware calls must not overlap");
         running = true;
         calls.push({ command, signal, tiers, output, dimTarget });
-        try { return await handle(command, signal, onGain, output, dimTarget); }
+        try {
+            const result = await handle(command, signal, onGain, output, dimTarget);
+            return command === "read-dim" && result === "ok" ? "Dim Off" : result;
+        }
         finally { running = false; }
     }, error => faults.push(error));
     t.after(() => socket.dispatchEvent(new Event("close")));
@@ -64,7 +67,7 @@ test("Mute discards earlier Up input and a second Mute cancels an in-flight unmu
     assert.deepEqual(calls.map(x => x.command), ["mute", "force-mute"]);
     tap("up");
     await pause(10);
-    assert.deepEqual(calls.map(x => x.command), ["mute", "force-mute", "up"]);
+    assert.deepEqual(calls.map(x => x.command), ["mute", "force-mute", "read-dim", "up"]);
     assert.deepEqual(faults, []);
 });
 
@@ -72,16 +75,16 @@ test("rapid taps accelerate, coalesce into one bounded batch, and reset after a 
     let finishFirst;
     const first = new Promise(resolve => { finishFirst = resolve; });
     let count = 0;
-    const { calls, tap } = harness(t, async () => ++count === 1 ? first : "ok");
+    const { calls, tap } = harness(t, async command => command === "read-dim" ? "Dim Off" : ++count === 1 ? first : "ok");
     tap("up");
     await pause(5);
     tap("up");
     tap("up");
     tap("up");
-    assert.deepEqual(calls.map(x => [x.command, x.tiers]), [["up", [1]]]);
+    assert.deepEqual(calls.filter(x => x.command === "up").map(x => x.tiers), [[1]]);
     finishFirst("ok");
     await pause(15);
-    assert.deepEqual(calls.map(x => [x.command, x.tiers]), [["up", [1]], ["up", [2, 3]]]);
+    assert.deepEqual(calls.filter(x => x.command === "up").map(x => x.tiers), [[1], [2, 3]]);
     await pause(300);
     tap("up");
     await pause(5);
@@ -104,8 +107,8 @@ test("a rapid Up burst never replays after Mute", async t => {
     tap("up");
     tap("mute");
     await pause(15);
-    assert.equal(calls[0].signal.aborted, true);
-    assert.deepEqual(calls.map(x => x.command), ["up", "mute"]);
+    assert.equal(calls.find(x => x.command === "up").signal.aborted, true);
+    assert.deepEqual(calls.map(x => x.command), ["read-dim", "up", "mute"]);
 });
 
 async function until(predicate) {
@@ -176,7 +179,7 @@ test("headphone keys use their own hardware state and commands", async t => {
     await until(() => hasImage("phones-up", 'width="23.96"'));
     tap("phones-mute");
     await until(() => hasImage("phones-mute", ">MUTED</text>"));
-    assert.deepEqual(calls.filter(x => x.command !== "read-status").map(x => [x.command, x.output]),
+    assert.deepEqual(calls.filter(x => !["read-status", "read-dim"].includes(x.command)).map(x => [x.command, x.output]),
         [["up", "phones"], ["down", "phones"], ["mute", "phones"]]);
 });
 
@@ -231,4 +234,38 @@ test("only the latest Dim intent runs when several presses arrive before a fade 
         decodeURIComponent(item.payload.image.slice("data:image/svg+xml,".length)).includes(">DIM</text>") &&
         calls.some(call => call.dimTarget === "off")));
     assert.deepEqual(calls.filter(call => call.command === "dim").map(call => call.dimTarget), ["on", "off"]);
+});
+
+test("Monitor Up clears Dim even if the Dim key is hidden, and consumes the entire hold", async t => {
+    const { calls, event, tap } = harness(t, async command => {
+        if (command === "read-dim") return "Dim On";
+        if (command === "read-status") return "STATUS 119 0";
+        return command === "dim" ? "Dim Off" : "ok";
+    });
+    event("keyDown", "up");
+    await until(() => calls.some(call => call.dimTarget === "off"));
+    await pause(260);
+    event("keyUp", "up");
+    assert.deepEqual(calls.map(call => call.command), ["read-dim", "dim"]);
+    tap("up");
+    await until(() => calls.some(call => call.command === "up"));
+    assert.deepEqual(calls.map(call => call.command), ["read-dim", "dim", "up"]);
+});
+
+test("Monitor Up reverses an active Dim fade and leaves headphone Up independent", async t => {
+    const { calls, event, tap } = harness(t, async (command, signal, _gain, _output, target) => {
+        if (command === "read-dim") return "Dim Off";
+        if (command === "read-status") return "STATUS 119 0";
+        if (target === "on") await pause(1000, undefined, { signal });
+        return target === "off" ? "Dim Off" : "ok";
+    });
+    event("willAppear", "dim");
+    tap("dim");
+    await until(() => calls.some(call => call.dimTarget === "on"));
+    tap("up");
+    await until(() => calls.some(call => call.dimTarget === "off"));
+    assert.equal(calls.find(call => call.dimTarget === "on").signal.aborted, true);
+    assert.equal(calls.some(call => call.command === "up"), false);
+    tap("phones-up");
+    await until(() => calls.some(call => call.command === "up" && call.output === "phones"));
 });

@@ -136,6 +136,8 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     function enqueue(command, context, press, trimDb, batch, output = "monitor", intent) {
         const generation = volumeGeneration;
         const expires = performance.now() + volumeInputLifetimeMs;
+        const monitorUp = output === "monitor" && (command === "up" || command === "hold-up");
+        if (monitorUp && !dimKnown) readDim(context);
         if (!isRead(command) && active?.command === "read-status") active.controller.abort();
         queuedJobs++;
         if (isMute(command)) muteJobs[output]++;
@@ -145,6 +147,13 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
                 (intent && dimIntent !== intent) ||
                 (muting() && !isMute(command)) ||
                 (isVolume(command) && (generation !== volumeGeneration || performance.now() > expires))) return;
+            if (monitorUp) {
+                if (!dimKnown) {
+                    if (typeof context === "string") send("showAlert", context);
+                    return;
+                }
+                if (clearDimOnUp(context)) return;
+            }
             const controller = new AbortController();
             active = { command, context, controller, press, output };
             try {
@@ -202,15 +211,28 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     }
 
     function pressDim(context) {
-        stopHold();
-        supersedeVolume();
         if (!dimKnown) {
+            stopHold();
+            supersedeVolume();
             dimPressPending = !dimPressPending;
             readDim(context);
             return;
         }
         const wasOn = dimIntent ? dimIntent.target === "on" : dimActive;
-        const intent = { target: wasOn ? "off" : "on" };
+        requestDim(context, wasOn ? "off" : "on");
+    }
+
+    function clearDimOnUp(context) {
+        if (dimIntent?.target === "off") return true;
+        if (!dimActive && dimIntent?.target !== "on") return false;
+        requestDim(context, "off");
+        return true;
+    }
+
+    function requestDim(context, target) {
+        stopHold();
+        supersedeVolume();
+        const intent = { target };
         dimIntent = intent;
         if (active?.command === "dim") active.controller.abort();
         renderStatus();
@@ -220,7 +242,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             renderStatus();
             if (!result) {
                 dimKnown = false;
-                if (modeKeys.has(context)) readDim(context);
+                if (socket.readyState === WebSocket.OPEN) readDim(context);
             }
         });
     }
@@ -278,6 +300,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
                 if (key === "dim") readDim(context);
                 else enqueue(`read-${key}`, context);
             }
+            if (output === "monitor" && key === "up" && !dimKnown) readDim(context);
             return;
         }
         if (event === "keyUp" || event === "willDisappear") {
@@ -345,6 +368,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             });
         } else {
             if (muting()) return;
+            if (output === "monitor" && key === "up" && clearDimOnUp(context)) return;
             stopHold();
             supersedeVolume(`${output}:${key === "up" ? 1 : -1}`);
             if (payload?.isInMultiAction) {
