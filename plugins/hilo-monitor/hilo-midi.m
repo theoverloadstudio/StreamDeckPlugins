@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 #import <CoreMIDI/CoreMIDI.h>
 #import <dispatch/dispatch.h>
+#include <signal.h>
+#include <time.h>
 #include <unistd.h>
 
 static const UInt8 manufacturer[] = {0xf0, 0x00, 0x01, 0x54};
@@ -16,6 +18,17 @@ static const int minimumAudible = 49; // -71.5 dB
 static const int holdUpStep = 3; // 1.5 dB
 static const int holdDownStep = 6; // 3 dB, still written in 0.5 dB steps
 static const int fineRange = 172; // -10 dB
+static volatile sig_atomic_t cancelled;
+
+static void cancelCommand(int signalNumber) {
+    cancelled = 1;
+}
+
+static double monotonicTime(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec + now.tv_nsec / 1e9;
+}
 
 typedef struct {
     unsigned reg;
@@ -79,7 +92,7 @@ static int registerValue(const UInt8 *message, size_t length, unsigned reg) {
         message[length - 1] != 0xf7) return -1;
     if (reg < 256) {
         if (message[4] != (0x70 | (reg >> 5)) || message[5] != ((reg & 0x1f) << 2) ||
-            message[6] != 0 || (message[8] & 0x3f) != 0) return -1;
+            message[6] != 0) return -1;
         return (message[7] << 1) | (message[8] >> 6);
     }
     if (message[4] != 0x77 || message[5] != reg >> 9 || message[6] != ((reg >> 2) & 0x7f) ||
@@ -125,7 +138,9 @@ static BOOL setValue(MIDIPortRef output, MIDIEndpointRef destination,
 static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
     int current, int target, useconds_t stepDelay, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     const int direction = target > current ? 1 : -1;
+    const double deadline = monotonicTime() + 5;
     while (current != target) {
+        if (cancelled || monotonicTime() >= deadline) return NO;
         const int next = current + direction;
 
         if (!setValue(output, destination, monitorRegister, current, next, response, lock, reply)) {
@@ -134,18 +149,34 @@ static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
         current = next;
         if (current != target) usleep(current < minimumAudible ? 2500 : stepDelay);
     }
-    return YES;
+    return !cancelled;
 }
 
 static BOOL fadeIn(MIDIPortRef output, MIDIEndpointRef destination,
     int gain, int targetGain, int muteState, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+    if (cancelled) return NO;
     const int start = MIN(gain, minimumGain); // Unmute at the quietest confirmed analog level.
     const BOOL atStart = (muteState & monitorMuteMask) == monitorMuteMask
         ? setValue(output, destination, monitorRegister, gain, start, response, lock, reply)
         : rampGain(output, destination, gain, start, 6500, response, lock, reply);
-    return atStart &&
+    if (atStart && !cancelled &&
         setValue(output, destination, muteRegister, muteState, muteState & ~monitorMuteMask, response, lock, reply) &&
-        rampGain(output, destination, start, targetGain, 7500, response, lock, reply);
+        rampGain(output, destination, start, targetGain, 7500, response, lock, reply)) return YES;
+
+    // An interrupted unmute must not leave an unmuted output or lose the
+    // listening level. Restore gain only after both hardware mutes confirm.
+    const int actualMute = requestValue(output, destination, muteRegister, response, lock, reply);
+    if (actualMute >= 0 && setValue(output, destination, muteRegister, actualMute,
+        actualMute | monitorMuteMask, response, lock, reply)) {
+        const int actualGain = requestValue(output, destination, monitorRegister, response, lock, reply);
+        if (actualGain >= 0 && actualGain <= unity &&
+            setValue(output, destination, monitorRegister, actualGain, gain, response, lock, reply)) {
+            fprintf(stderr, "Unmute did not finish. Monitor Out was re-muted and the previous level restored.\n");
+            return NO;
+        }
+    }
+    fprintf(stderr, "Unmute did not finish. Could not confirm that both mute and gain were restored.\n");
+    return NO;
 }
 
 static int raisedTarget(int current, int steps) {
@@ -179,7 +210,9 @@ static BOOL validDigitalLevel(int level) {
 
 static BOOL rampDigital(MIDIPortRef output, MIDIEndpointRef destination, int current[2], const int target[2],
     dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+    const double deadline = monotonicTime() + 5;
     while (current[0] != target[0] || current[1] != target[1]) {
+        if (cancelled || monotonicTime() >= deadline) return NO;
         for (int channel = 0; channel < 2; channel++) {
             if (current[channel] == target[channel]) continue;
             const int next = current[channel] + (current[channel] < target[channel] ? 1 : -1);
@@ -195,9 +228,11 @@ static BOOL rampDigital(MIDIPortRef output, MIDIEndpointRef destination, int cur
 
 int main(int argc, const char **argv) {
     @autoreleasepool {
+        signal(SIGTERM, cancelCommand);
         char *end = NULL;
         NSString *action = argc >= 2 ? @(argv[1]) : @"";
         BOOL mute = [action isEqualToString:@"mute"];
+        BOOL forceMute = [action isEqualToString:@"force-mute"];
         BOOL readMute = [action isEqualToString:@"read-mute"];
         BOOL up = [action isEqualToString:@"up"] || [action isEqualToString:@"hold-up"];
         BOOL down = [action isEqualToString:@"down"] || [action isEqualToString:@"hold-down"];
@@ -213,18 +248,22 @@ int main(int argc, const char **argv) {
                 if (index < 2) expectedDigital[index] = (int)value;
                 else targetDigital[index - 2] = (int)value;
             }
-            const int delta = targetDigital[0] - expectedDigital[0];
-            if (abs(delta) > 30 || delta != targetDigital[1] - expectedDigital[1]) return 1;
+            const int left = targetDigital[0] - expectedDigital[0];
+            const int right = targetDigital[1] - expectedDigital[1];
+            // An interrupted pair may be half a dB out of sync. Allow the
+            // imbalance to be repaired by lowering, never while raising.
+            if (abs(left) > 30 || abs(right) > 30 ||
+                (left != right && (left < 0 || right < 0 || abs(left - right) > 1))) return 1;
         } else if (argc != 2 || setDigital) {
             return 1;
         }
         long steps = action.length ? strtol(argv[1], &end, 10) : 0;
-        if (!(mute || readMute || up || down || readDigital || setDigital) &&
+        if (!(mute || forceMute || readMute || up || down || readDigital || setDigital) &&
             (!end || end == argv[1] || *end || steps < -10 || steps > 10)) {
             fprintf(stderr, "Invalid Monitor Out command.\n");
             return 1;
         }
-        unsigned reg = mute || readMute ? muteRegister : monitorRegister;
+        unsigned reg = mute || forceMute || readMute ? muteRegister : monitorRegister;
 
         MIDIClientRef client = 0;
         MIDIPortRef input = 0, output = 0;
@@ -303,10 +342,12 @@ int main(int argc, const char **argv) {
         }
         int target = current;
         BOOL verified;
-        if (mute) {
-            target = (current & monitorMuteMask) == monitorMuteMask
+        if (mute || forceMute) {
+            target = !forceMute && (current & monitorMuteMask) == monitorMuteMask
                 ? current & ~monitorMuteMask : current | monitorMuteMask;
-            if (!(target & monitorMuteMask)) {
+            if (cancelled) {
+                verified = NO;
+            } else if (!(target & monitorMuteMask)) {
                 int gain = requestValue(output, destination, monitorRegister, response, lock, &reply);
                 verified = gain >= 0 && gain <= unity &&
                     fadeIn(output, destination, gain, gain, current, response, lock, &reply);
@@ -320,7 +361,7 @@ int main(int argc, const char **argv) {
             else if (steps > 0) target = raisedTarget(current, (int)steps);
             else if (steps < 0) target = (int)MAX(MIN(current, minimumGain), current + steps);
 
-            int muteState = up && !repeat
+            int muteState = up
                 ? requestValue(output, destination, muteRegister, response, lock, &reply) : 0;
             if (muteState < 0) {
                 fprintf(stderr, "Cannot read the Hilo Monitor Out mute state.\n");
@@ -328,6 +369,11 @@ int main(int argc, const char **argv) {
                 return 1;
             }
             if (muteState & monitorMuteMask) {
+                if (repeat) {
+                    puts("Limit");
+                    MIDIClientDispose(client);
+                    return 0;
+                }
                 // A first press restores the listening level. From Off, bring
                 // the output back to the first usable volume step.
                 if (current > minimumGain) target = current;
@@ -338,7 +384,7 @@ int main(int argc, const char **argv) {
                     response, lock, &reply);
                 if (verified && down && target <= minimumGain) {
                     int muted = requestValue(output, destination, muteRegister, response, lock, &reply);
-                    verified = muted >= 0 && setValue(output, destination, muteRegister, muted,
+                    verified = !cancelled && muted >= 0 && setValue(output, destination, muteRegister, muted,
                         muted | monitorMuteMask, response, lock, &reply);
                 }
             }
@@ -354,6 +400,7 @@ int main(int argc, const char **argv) {
             (down && target <= minimumGain))) puts("Limit");
         else if ((down && target <= minimumGain) || target == 0) puts("Off");
         else printf("%.1f\n", (target - unity) * 0.5);
+        fflush(stdout);
         MIDIClientDispose(client);
         return 0;
     }

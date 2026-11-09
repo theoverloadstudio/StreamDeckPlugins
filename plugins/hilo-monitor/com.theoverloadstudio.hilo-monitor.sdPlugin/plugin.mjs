@@ -21,13 +21,22 @@ const { values } = parseArgs({
 
 async function runHelper(args, signal) {
     signal.throwIfAborted();
-    const operation = run(helper, args.map(String), { signal, timeout: 4500 });
+    const operation = run(helper, args.map(String), { signal, timeout: 12000 });
     const closed = new Promise(resolve => operation.child.once("close", resolve));
+    let forceExit;
+    const armForceExit = () => {
+        forceExit ??= setTimeout(() => operation.child.kill("SIGKILL"), 3000);
+    };
+    const watchdog = setTimeout(armForceExit, 12000);
+    signal.addEventListener("abort", armForceExit, { once: true });
     try {
         const { stdout } = await operation;
         return stdout.trim();
     } finally {
         await closed;
+        clearTimeout(watchdog);
+        clearTimeout(forceExit);
+        signal.removeEventListener("abort", armForceExit);
     }
 }
 
@@ -39,5 +48,6 @@ attachMonitorActions(
     (command, signal) => command === "dim" || command === "read-dim"
         ? dim(command === "dim", signal)
         : runHelper([command], signal),
-    (error) => console.error("Hilo Monitor:", error.stderr?.trim() || error.message),
+    (error) => console.error("Hilo Monitor:", error.stderr?.trim() ||
+        (error.signal ? `USB command stopped (${error.signal}).` : error.message)),
 );
