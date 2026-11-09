@@ -6,6 +6,9 @@
 static const UInt8 manufacturer[] = {0xf0, 0x00, 0x01, 0x54};
 static const unsigned monitorRegister = 0x28;
 static const unsigned muteRegister = 0x220;
+static const unsigned monitorDigital[] = {0x204, 0x205};
+static const int digitalUnity = 24;
+static const int digitalFloor = 216;
 static const int monitorMuteMask = 0x30; // Monitor Out left and right
 static const int unity = 192;
 static const int minimumGain = 1; // -95.5 dB; original Hilo does not accept a zero write
@@ -13,7 +16,6 @@ static const int minimumAudible = 49; // -71.5 dB
 static const int holdUpStep = 3; // 1.5 dB
 static const int holdDownStep = 6; // 3 dB, still written in 0.5 dB steps
 static const int fineRange = 172; // -10 dB
-static const int unmuteCeiling = 132; // -30 dB
 
 typedef struct {
     unsigned reg;
@@ -81,7 +83,7 @@ static int registerValue(const UInt8 *message, size_t length, unsigned reg) {
         return (message[7] << 1) | (message[8] >> 6);
     }
     if (message[4] != 0x77 || message[5] != reg >> 9 || message[6] != ((reg >> 2) & 0x7f) ||
-        message[7] != ((reg & 3) << 5) || message[8] || message[9] || (message[11] & 0x3f) != 0) return -1;
+        message[7] != ((reg & 3) << 5) || message[8] || message[9]) return -1;
     return (message[10] << 1) | (message[11] >> 6);
 }
 
@@ -171,18 +173,55 @@ static int buttonTarget(int current, BOOL up, BOOL repeat) {
     return current;
 }
 
+static BOOL validDigitalLevel(int level) {
+    return level >= digitalUnity && level <= digitalFloor;
+}
+
+static BOOL rampDigital(MIDIPortRef output, MIDIEndpointRef destination, int current[2], const int target[2],
+    dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+    while (current[0] != target[0] || current[1] != target[1]) {
+        for (int channel = 0; channel < 2; channel++) {
+            if (current[channel] == target[channel]) continue;
+            const int next = current[channel] + (current[channel] < target[channel] ? 1 : -1);
+            if (!setValue(output, destination, monitorDigital[channel], current[channel], next, response, lock, reply)) {
+                return NO;
+            }
+            current[channel] = next;
+        }
+        if (current[0] != target[0] || current[1] != target[1]) usleep(10000);
+    }
+    return YES;
+}
+
 int main(int argc, const char **argv) {
     @autoreleasepool {
         char *end = NULL;
-        NSString *action = argc == 2 ? @(argv[1]) : @"";
+        NSString *action = argc >= 2 ? @(argv[1]) : @"";
         BOOL mute = [action isEqualToString:@"mute"];
         BOOL readMute = [action isEqualToString:@"read-mute"];
         BOOL up = [action isEqualToString:@"up"] || [action isEqualToString:@"hold-up"];
         BOOL down = [action isEqualToString:@"down"] || [action isEqualToString:@"hold-down"];
         BOOL repeat = [action hasPrefix:@"hold-"];
+        BOOL readDigital = [action isEqualToString:@"read-digital"];
+        BOOL setDigital = [action isEqualToString:@"set-digital"];
+        int expectedDigital[2], targetDigital[2];
+        if (setDigital && argc == 6) {
+            for (int index = 0; index < 4; index++) {
+                const char *argument = argv[index + 2];
+                long value = strtol(argument, &end, 10);
+                if (end == argument || *end || value < digitalUnity || value > digitalFloor) return 1;
+                if (index < 2) expectedDigital[index] = (int)value;
+                else targetDigital[index - 2] = (int)value;
+            }
+            const int delta = targetDigital[0] - expectedDigital[0];
+            if (abs(delta) > 30 || delta != targetDigital[1] - expectedDigital[1]) return 1;
+        } else if (argc != 2 || setDigital) {
+            return 1;
+        }
         long steps = action.length ? strtol(argv[1], &end, 10) : 0;
-        if (!(mute || readMute || up || down) && (!end || end == argv[1] || *end || steps < -10 || steps > 10)) {
-            fprintf(stderr, "Pass up, down, hold-up, hold-down, mute, read-mute, or a step count between -10 and 10.\n");
+        if (!(mute || readMute || up || down || readDigital || setDigital) &&
+            (!end || end == argv[1] || *end || steps < -10 || steps > 10)) {
+            fprintf(stderr, "Invalid Monitor Out command.\n");
             return 1;
         }
         unsigned reg = mute || readMute ? muteRegister : monitorRegister;
@@ -236,6 +275,26 @@ int main(int argc, const char **argv) {
             return 1;
         }
 
+        if (readDigital || setDigital) {
+            int digital[2];
+            for (int channel = 0; channel < 2; channel++) {
+                digital[channel] = requestValue(output, destination, monitorDigital[channel], response, lock, &reply);
+                if (!validDigitalLevel(digital[channel]) || (setDigital && digital[channel] != expectedDigital[channel])) {
+                    fprintf(stderr, "Cannot verify the expected Hilo Monitor Out digital levels.\n");
+                    MIDIClientDispose(client);
+                    return 1;
+                }
+            }
+            if (setDigital && !rampDigital(output, destination, digital, targetDigital, response, lock, &reply)) {
+                fprintf(stderr, "Cannot confirm the Hilo Dim ramp.\n");
+                MIDIClientDispose(client);
+                return 1;
+            }
+            printf("%d %d\n", digital[0], digital[1]);
+            MIDIClientDispose(client);
+            return 0;
+        }
+
         int current = requestValue(output, destination, reg, response, lock, &reply);
         if (current < 0 || (reg == monitorRegister && current > unity)) {
             fprintf(stderr, "Cannot verify the Hilo Monitor Out state.\n");
@@ -250,7 +309,7 @@ int main(int argc, const char **argv) {
             if (!(target & monitorMuteMask)) {
                 int gain = requestValue(output, destination, monitorRegister, response, lock, &reply);
                 verified = gain >= 0 && gain <= unity &&
-                    fadeIn(output, destination, gain, MIN(gain, unmuteCeiling), current, response, lock, &reply);
+                    fadeIn(output, destination, gain, gain, current, response, lock, &reply);
             } else {
                 verified = setValue(output, destination, reg, current, target, response, lock, &reply);
             }
@@ -269,7 +328,9 @@ int main(int argc, const char **argv) {
                 return 1;
             }
             if (muteState & monitorMuteMask) {
-                target = MIN(target, unmuteCeiling);
+                // A first press restores the listening level. From Off, bring
+                // the output back to the first usable volume step.
+                if (current > minimumGain) target = current;
                 verified = fadeIn(output, destination, current, target, muteState, response, lock, &reply);
             } else {
                 const useconds_t stepDelay = repeat ? (down ? 3000 : 6500) : 10000;

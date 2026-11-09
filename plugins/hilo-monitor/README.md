@@ -1,6 +1,8 @@
 # Hilo Monitor for Stream Deck
 
-Control the analog speaker level of a Lynx Hilo connected over USB. Hilo Remote can be closed. Add **Monitor Up** (green), **Monitor Down** (orange), and **Mute Monitor** (red) to three keys. The keys pulse while held. Mute toggles both Monitor Out channels. Monitor Up also clears the Monitor Out mute. When either key unmutes, the level fades in from the Hilo’s quietest analog level to the intended setting, capped at −30 dB.
+Control the analog speaker level of a Lynx Hilo connected over USB. Hilo Remote can be closed. Add **Monitor Up** (green), **Monitor Down** (orange), and **Mute Monitor** (red). The keys pulse while held. Mute toggles both Monitor Out channels. Unmute fades back to the analog level shown before unmuting. The first press of Monitor Up while muted also restores that level; from Off, it brings the monitors up to the first usable step.
+
+Add **Dim Monitor** to a fourth key. It fades the two Monitor Out digital channels down by 15 dB and lights the key. Press it again to fade back. The analog volume and mute stay independent, so you can change volume while dimmed and still return to the corresponding undimmed level. If the digital channels are already close to their minimum, Dim uses the available headroom equally on both channels. If another control changes the digital levels while Dim is on, the key will warn on the next press and will not restore the old level.
 
 | Monitor Out range | Tap step |
 | --- | ---: |
