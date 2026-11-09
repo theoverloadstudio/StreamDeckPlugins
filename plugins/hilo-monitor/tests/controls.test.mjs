@@ -134,7 +134,7 @@ test("visible keys show the verified Hilo level, external mute changes and disco
     event("willAppear", "mute");
     event("willAppear", "up");
     event("willAppear", "down");
-    await until(() => image("dim", 'aria-label="-22.5 dB"') && image("mute", ">LIVE</text>") &&
+    await until(() => image("dim", 'aria-label="-22.5 dB"') && image("mute", ">ON</text>") &&
         image("up", 'width="38.28"') && image("down", 'width="38.28"'));
     assert.ok(image("dim", ">DIM ON</text>") && image("dim", "#efbd66"));
     assert.ok(sent.some(x => x.context === "dim" && x.event === "setState" && x.payload.state === 1));
@@ -168,7 +168,7 @@ test("headphone keys use their own hardware state and commands", async t => {
     event("willAppear", "phones-up");
     event("willAppear", "phones-mute");
     await until(() => hasImage("up", 'width="37.50"') && hasImage("phones-up", 'width="25.00"') &&
-        hasImage("phones-mute", ">LIVE</text>"));
+        hasImage("phones-mute", ">ON</text>"));
     tap("phones-up");
     await until(() => hasImage("phones-up", 'width="26.04"'));
     assert.equal(hasImage("up", 'width="26.04"'), false);

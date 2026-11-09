@@ -302,6 +302,8 @@ static BOOL applyRoute(MIDIPortRef output, MIDIEndpointRef destination, int curr
 static BOOL rampDigital(MIDIPortRef output, MIDIEndpointRef destination, int current[2], const int target[2],
     dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     const double deadline = monotonicTime() + 5;
+    const BOOL dimming = target[0] >= current[0] && target[1] >= current[1];
+    const useconds_t stepPause = dimming ? 5000 : 10000;
     while (current[0] != target[0] || current[1] != target[1]) {
         if (cancelled || monotonicTime() >= deadline) return NO;
         for (int channel = 0; channel < 2; channel++) {
@@ -312,7 +314,7 @@ static BOOL rampDigital(MIDIPortRef output, MIDIEndpointRef destination, int cur
             }
             current[channel] = next;
         }
-        if (current[0] != target[0] || current[1] != target[1]) usleep(10000);
+        if (current[0] != target[0] || current[1] != target[1]) usleep(stepPause);
     }
     return YES;
 }

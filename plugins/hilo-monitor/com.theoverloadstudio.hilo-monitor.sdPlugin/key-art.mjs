@@ -60,7 +60,7 @@ export function keySvg(key, { gain, active, muteBits, phones = false, bright = f
         content = label(active ? "DIM ON" : "DIM", 21, 10, 1.2) + lamp(62, 17, active ? "#9e501c" : "#b8a992") +
             readout(gain) + label("MON OUT · dB", 58, 6.3, .5, "#584a3d");
     } else if (key === "mute") {
-        const states = [["LIVE", accents.up], ["L MUTED", accents.amber], ["R MUTED", accents.amber], ["MUTED", accents.red]];
+        const states = [["ON", accents.up], ["L MUTED", accents.amber], ["R MUTED", accents.amber], ["MUTED", accents.red]];
         const [status, color] = states[muteBits] ?? ["NO LINK", accents.neutral];
         const muted = muteBits === 3;
         const foreground = muted ? "#fff2dc" : ink;
