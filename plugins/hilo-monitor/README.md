@@ -11,7 +11,7 @@ Control the analog speaker level of a Lynx Hilo connected over USB. Add **Monito
 
 A tap ramps to its target in verified 0.5 dB steps. It stops at a range boundary before continuing in the next range. One up tap from Off ends at −71.5 dB. One down tap from −71.5 dB turns the level Off.
 
-Hold either volume key for continuous changes. The ramp slows in the last 10 dB, and USB verification can lengthen the full sweep. Release the key to stop repeating. Mute interrupts an active volume ramp and cancels pending volume changes.
+Hold either volume key for continuous changes. Volume Down moves faster through the full range. Volume Up slows in the last 10 dB. Every half-decibel step is verified over USB. Release the key to stop repeating. Mute interrupts an active volume ramp and cancels pending volume changes.
 
 The optional **Monitor Volume Dial** uses the Stream Deck + encoder, with 0.5 dB per tick and a maximum of 5 dB per event. Upward turns above −10 dB are limited to 0.5 dB per event. The plugin reads the hardware level before adjusting it and caps increases at 0 dB.
 

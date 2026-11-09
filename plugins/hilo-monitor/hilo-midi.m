@@ -9,7 +9,8 @@ static const unsigned muteRegister = 0x220;
 static const int monitorMuteMask = 0x30; // Monitor Out left and right
 static const int unity = 192;
 static const int minimumAudible = 49; // -71.5 dB
-static const int holdStep = 3; // 1.5 dB
+static const int holdUpStep = 3; // 1.5 dB
+static const int holdDownStep = 6; // 3 dB, still written in 0.5 dB steps
 static const int fineRange = 172; // -10 dB
 static const int unmuteCeiling = 132; // -30 dB
 
@@ -139,8 +140,8 @@ static int buttonTarget(int current, BOOL up, BOOL repeat) {
     if (up && current < minimumAudible) return minimumAudible;
     if (!up && current <= minimumAudible) return 0;
     if (repeat) {
-        if (up) return raisedTarget(current, holdStep);
-        return current > fineRange ? current - 1 : MAX(minimumAudible, current - holdStep);
+        if (up) return raisedTarget(current, holdUpStep);
+        return MAX(minimumAudible, current - holdDownStep);
     }
     const int boundaries[] = {minimumAudible, 132, 152, 172, unity};
     const int steps[] = {12, 5, 2, 1};
@@ -256,7 +257,8 @@ int main(int argc, const char **argv) {
                 target = MIN(target, unmuteCeiling);
                 verified = fadeIn(input, output, source, destination, current, target, muteState, response, lock, &reply);
             } else {
-                verified = rampGain(input, output, source, destination, current, target, repeat ? 6500 : 10000,
+                const useconds_t stepDelay = repeat ? (down ? 3000 : 6500) : 10000;
+                verified = rampGain(input, output, source, destination, current, target, stepDelay,
                     response, lock, &reply);
             }
         }

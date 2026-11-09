@@ -1,6 +1,6 @@
 const pluginId = "com.theoverloadstudio.hilo-monitor";
 const holdDelayMs = 125;
-const repeatIntervalMs = 37;
+const repeatIntervalsMs = { up: 37, down: 28 };
 const pulseIntervalMs = 180;
 
 export function attachMonitorActions(socket, registration, adjust, reportError) {
@@ -77,7 +77,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             );
             if (held === press && result !== undefined && result !== "Limit") {
                 const elapsed = performance.now() - startedAt;
-                scheduleRepeat(press, Math.max(0, repeatIntervalMs - elapsed));
+                scheduleRepeat(press, Math.max(0, repeatIntervalsMs[press.direction] - elapsed));
             }
         }, delay);
     }
@@ -133,7 +133,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             enqueue(key, context).then((result) => {
                 if (result !== undefined) {
                     const elapsed = performance.now() - press.startedAt;
-                    scheduleRepeat(press, Math.max(0, holdDelayMs + repeatIntervalMs - elapsed));
+                    scheduleRepeat(press, Math.max(0, holdDelayMs + repeatIntervalsMs[key] - elapsed));
                 }
             });
         }
