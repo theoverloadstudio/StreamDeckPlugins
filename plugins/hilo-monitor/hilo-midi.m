@@ -8,6 +8,7 @@ static const unsigned monitorRegister = 0x28;
 static const unsigned muteRegister = 0x220;
 static const int monitorMuteMask = 0x30; // Monitor Out left and right
 static const int unity = 192;
+static const int minimumGain = 1; // -95.5 dB; original Hilo does not accept a zero write
 static const int minimumAudible = 49; // -71.5 dB
 static const int holdUpStep = 3; // 1.5 dB
 static const int holdDownStep = 6; // 3 dB, still written in 0.5 dB steps
@@ -136,7 +137,7 @@ static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
 
 static BOOL fadeIn(MIDIPortRef output, MIDIEndpointRef destination,
     int gain, int targetGain, int muteState, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
-    const int start = 0; // Restore audio with the analog gain at Off.
+    const int start = MIN(gain, minimumGain); // Unmute at the quietest confirmed analog level.
     const BOOL atStart = (muteState & monitorMuteMask) == monitorMuteMask
         ? setValue(output, destination, monitorRegister, gain, start, response, lock, reply)
         : rampGain(output, destination, gain, start, 6500, response, lock, reply);
@@ -151,7 +152,7 @@ static int raisedTarget(int current, int steps) {
 
 static int buttonTarget(int current, BOOL up, BOOL repeat) {
     if (up && current < minimumAudible) return minimumAudible;
-    if (!up && current <= minimumAudible) return 0;
+    if (!up && current <= minimumAudible) return MIN(current, minimumGain);
     if (repeat) {
         if (up) return raisedTarget(current, holdUpStep);
         return MAX(minimumAudible, current - holdDownStep);
@@ -258,7 +259,7 @@ int main(int argc, const char **argv) {
         } else {
             if (up || down) target = buttonTarget(current, up, repeat);
             else if (steps > 0) target = raisedTarget(current, (int)steps);
-            else if (steps < 0) target = (int)MAX(0, current + steps);
+            else if (steps < 0) target = (int)MAX(MIN(current, minimumGain), current + steps);
 
             int muteState = up && !repeat
                 ? requestValue(output, destination, muteRegister, response, lock, &reply) : 0;
@@ -274,6 +275,11 @@ int main(int argc, const char **argv) {
                 const useconds_t stepDelay = repeat ? (down ? 3000 : 6500) : 10000;
                 verified = rampGain(output, destination, current, target, stepDelay,
                     response, lock, &reply);
+                if (verified && down && target <= minimumGain) {
+                    int muted = requestValue(output, destination, muteRegister, response, lock, &reply);
+                    verified = muted >= 0 && setValue(output, destination, muteRegister, muted,
+                        muted | monitorMuteMask, response, lock, &reply);
+                }
             }
         }
 
@@ -283,8 +289,9 @@ int main(int argc, const char **argv) {
             return 1;
         }
         if (reg == muteRegister) puts((target & monitorMuteMask) == monitorMuteMask ? "Muted" : "Unmuted");
-        else if (repeat && (target == current || (up && target == unity) || (down && !target))) puts("Limit");
-        else if (target == 0) puts("Off");
+        else if (repeat && (target == current || (up && target == unity) ||
+            (down && target <= minimumGain))) puts("Limit");
+        else if ((down && target <= minimumGain) || target == 0) puts("Off");
         else printf("%.1f\n", (target - unity) * 0.5);
         MIDIClientDispose(client);
         return 0;
