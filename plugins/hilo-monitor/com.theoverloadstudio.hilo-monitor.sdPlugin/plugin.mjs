@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { attachMonitorActions } from "./actions.mjs";
 import { createDim } from "./dim.mjs";
+import { createMono } from "./mono.mjs";
 
 const run = promisify(execFile);
 const helper = fileURLToPath(new URL("./hilo-midi", import.meta.url));
@@ -40,14 +41,17 @@ async function runHelper(args, signal) {
     }
 }
 
-const dim = createDim(runHelper, join(homedir(), "Library", "Application Support",
-    "The Overload Studio", "Hilo Monitor", "dim.json"));
+const stateDir = join(homedir(), "Library", "Application Support", "The Overload Studio", "Hilo Monitor");
+const dim = createDim(runHelper, join(stateDir, "dim.json"));
+const mono = createMono(runHelper, join(stateDir, "mono.json"));
 attachMonitorActions(
     new WebSocket(`ws://127.0.0.1:${values.port}`),
     { event: values.registerEvent, uuid: values.pluginUUID },
-    (command, signal) => command === "dim" || command === "read-dim"
-        ? dim(command === "dim", signal)
-        : runHelper([command], signal),
+    (command, signal, trimDb) => {
+        if (command === "dim" || command === "read-dim") return dim(command === "dim", signal);
+        if (command === "mono" || command === "read-mono") return mono(command === "mono", signal, trimDb);
+        return runHelper([command], signal);
+    },
     (error) => console.error("Hilo Monitor:", error.stderr?.trim() ||
         (error.signal ? `USB command stopped (${error.signal}).` : error.message)),
 );

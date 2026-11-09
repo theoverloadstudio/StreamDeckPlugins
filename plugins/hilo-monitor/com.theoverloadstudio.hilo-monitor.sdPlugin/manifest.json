@@ -8,7 +8,7 @@
   "CategoryIcon": "images/category",
   "Icon": "images/plugin",
   "CodePath": "plugin.mjs",
-  "Version": "1.6.1.0",
+  "Version": "1.7.0.0",
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "7.1" },
   "Nodejs": { "Version": "24" },
@@ -48,6 +48,19 @@
       "States": [
         { "Image": "images/dim", "ShowTitle": false },
         { "Image": "images/dim-on", "ShowTitle": false }
+      ]
+    },
+    {
+      "UUID": "com.theoverloadstudio.hilo-monitor.mono",
+      "Name": "Mono Monitor",
+      "Tooltip": "Sum the Monitor Out mix into the left speaker. Press again to restore stereo.",
+      "Controllers": ["Keypad"],
+      "DisableAutomaticStates": true,
+      "PropertyInspectorPath": "mono-settings.html",
+      "Icon": "images/action",
+      "States": [
+        { "Image": "images/mono", "ShowTitle": false },
+        { "Image": "images/mono-on", "ShowTitle": false }
       ]
     },
     {

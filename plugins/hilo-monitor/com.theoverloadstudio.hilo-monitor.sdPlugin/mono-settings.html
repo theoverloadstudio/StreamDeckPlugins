@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Mono Monitor settings</title>
+<style>
+    body { background: #2d2d2d; color: #efefef; font: 13px system-ui, sans-serif; margin: 12px; }
+    label { font-weight: 600; }
+    .heading { display: flex; justify-content: space-between; gap: 8px; }
+    input { width: 100%; margin: 8px 0 0; accent-color: #68c7bb; }
+    p { color: #c8c8c8; margin: 6px 0 0; }
+</style>
+<div class="heading">
+    <label for="minimum">Extra mono attenuation</label>
+    <output id="duration" for="minimum">−6 dB</output>
+</div>
+<input id="minimum" type="range" min="0" max="24" step="0.5" value="6"
+       aria-describedby="hint" disabled>
+<p id="hint">Applied the next time you turn Mono on, in addition to averaging left and right.</p>
+<script>
+    const slider = document.getElementById("minimum");
+    const duration = document.getElementById("duration");
+
+    function updateLabel() {
+        const db = slider.valueAsNumber;
+        duration.value = (db ? "−" + db : "0") + " dB";
+        slider.setAttribute("aria-valuetext", db + " decibels of attenuation");
+    }
+
+    window.connectElgatoStreamDeckSocket = (port, uuid, event, _info, actionInfo) => {
+        const action = JSON.parse(actionInfo).action;
+        let settings = JSON.parse(actionInfo).payload?.settings ?? {};
+        const socket = new WebSocket("ws://127.0.0.1:" + port);
+        const loadSettings = (next) => {
+            settings = next ?? {};
+            slider.value = Number.isFinite(settings.monoTrimDb) ? settings.monoTrimDb : 6;
+            updateLabel();
+        };
+
+        loadSettings(settings);
+        socket.addEventListener("open", () => {
+            socket.send(JSON.stringify({ event, uuid }));
+            slider.disabled = false;
+        });
+        socket.addEventListener("close", () => { slider.disabled = true; });
+        socket.addEventListener("message", ({ data }) => {
+            const message = JSON.parse(data);
+            if (message.event === "didReceiveSettings") loadSettings(message.payload.settings);
+        });
+        slider.addEventListener("input", updateLabel);
+        slider.addEventListener("change", () => {
+            settings = { ...settings, monoTrimDb: slider.valueAsNumber };
+            socket.send(JSON.stringify({ event: "setSettings", action, context: uuid, payload: settings }));
+        });
+    };
+</script>
+</html>
