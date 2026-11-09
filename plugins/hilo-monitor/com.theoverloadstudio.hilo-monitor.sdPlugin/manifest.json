@@ -8,7 +8,7 @@
   "CategoryIcon": "images/category",
   "Icon": "images/plugin",
   "CodePath": "plugin.mjs",
-  "Version": "1.1.0.0",
+  "Version": "1.2.0.0",
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "7.1" },
   "Nodejs": { "Version": "24" },
@@ -17,7 +17,7 @@
     {
       "UUID": "com.theoverloadstudio.hilo-monitor.up",
       "Name": "Monitor Up",
-      "Tooltip": "Raise Monitor Out. Hold to increase gradually up to -10 dB.",
+      "Tooltip": "Raise and unmute Monitor Out. Hold to ramp up to 0 dB.",
       "Controllers": ["Keypad"],
       "Icon": "images/action",
       "States": [{ "Image": "images/up", "ShowTitle": false }]

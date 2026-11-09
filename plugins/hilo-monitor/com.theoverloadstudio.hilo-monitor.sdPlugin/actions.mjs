@@ -1,5 +1,7 @@
 const pluginId = "com.theoverloadstudio.hilo-monitor";
-const holdDelayMs = 550;
+const holdDelayMs = 200;
+// The helper moves 1.5 dB per repeat, covering 71.5 dB in about 2.3 seconds.
+const repeatIntervalMs = 48;
 
 export function attachMonitorActions(socket, registration, adjust, reportError) {
     let pending = Promise.resolve();
@@ -30,14 +32,15 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         if (held !== press) return;
 
         press.timer = setTimeout(async () => {
+            const startedAt = performance.now();
             const result = await enqueue(
                 `hold-${press.direction}`,
                 press.context,
                 () => held === press,
             );
             if (held === press && result !== undefined && result !== "Limit") {
-                press.interval = Math.max(250, press.interval - 30);
-                scheduleRepeat(press, press.interval);
+                const elapsed = performance.now() - startedAt;
+                scheduleRepeat(press, Math.max(0, repeatIntervalMs - elapsed));
             }
         }, delay);
     }
@@ -70,10 +73,10 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
 
             stopHold();
             const direction = action === `${pluginId}.up` ? "up" : "down";
-            const press = { context, device, direction, interval: 430 };
+            const press = { context, device, direction };
             if (!payload?.isInMultiAction) held = press;
             enqueue(direction, context).then((result) => {
-                if (result !== undefined) scheduleRepeat(press, holdDelayMs);
+                if (result !== undefined) scheduleRepeat(press, holdDelayMs + repeatIntervalMs);
             });
         }
     });

@@ -8,7 +8,12 @@ static const unsigned muteRegister = 0x220;
 static const int monitorMuteMask = 0x30; // Monitor Out left and right
 static const int unity = 192;
 static const int minimumAudible = 49; // -71.5 dB
-static const int holdCeiling = 172; // -10 dB
+static const int holdStep = 3; // 1.5 dB
+
+typedef struct {
+    unsigned reg;
+    int value;
+} RegisterReply;
 
 static BOOL isHiloEndpoint(MIDIEndpointRef endpoint) {
     CFStringRef name = NULL;
@@ -74,16 +79,17 @@ static int registerValue(const UInt8 *message, size_t length, unsigned reg) {
 }
 
 static int requestValue(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef source, MIDIEndpointRef destination,
-    unsigned reg, dispatch_semaphore_t response, NSLock *lock, int *level) {
+    unsigned reg, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     [lock lock];
-    *level = -1;
+    reply->reg = reg;
+    reply->value = -1;
     [lock unlock];
     if (MIDIPortConnectSource(input, source, NULL) != noErr) return -1;
     int result = -1;
     if (sendRegister(output, destination, reg, NO, 0) == noErr &&
         dispatch_semaphore_wait(response, dispatch_time(DISPATCH_TIME_NOW, 750 * NSEC_PER_MSEC)) == 0) {
         [lock lock];
-        result = *level;
+        result = reply->value;
         [lock unlock];
     }
     MIDIPortDisconnectSource(input, source);
@@ -94,9 +100,7 @@ static int buttonTarget(int current, BOOL up, BOOL repeat) {
     if (up && current < minimumAudible) return minimumAudible;
     if (!up && current <= minimumAudible) return 0;
     if (repeat) {
-        if (up && current >= holdCeiling) return current;
-        const int step = current > holdCeiling ? 1 : 2;
-        return up ? MIN(holdCeiling, current + step) : MAX(minimumAudible, current - step);
+        return up ? MIN(unity, current + holdStep) : MAX(minimumAudible, current - holdStep);
     }
     const int boundaries[] = {minimumAudible, 132, 152, 172, unity};
     const int steps[] = {12, 5, 2, 1};
@@ -139,7 +143,7 @@ int main(int argc, const char **argv) {
             return 1;
         }
 
-        __block int level = -1;
+        __block RegisterReply reply = {0};
         __block struct { UInt8 message[13]; size_t length; } parser = {0};
         NSLock *lock = [NSLock new];
         dispatch_semaphore_t response = dispatch_semaphore_create(0);
@@ -157,16 +161,14 @@ int main(int argc, const char **argv) {
                         }
                         parser.message[parser.length++] = value;
                         if (value == 0xf7) {
-                            int parsed = registerValue(parser.message, parser.length, reg);
-                            parser.length = 0;
-                            if (parsed >= 0) {
-                                [lock lock];
-                                if (level < 0) {
-                                    level = parsed;
-                                    dispatch_semaphore_signal(response);
-                                }
-                                [lock unlock];
+                            [lock lock];
+                            int parsed = registerValue(parser.message, parser.length, reply.reg);
+                            if (parsed >= 0 && reply.value < 0) {
+                                reply.value = parsed;
+                                dispatch_semaphore_signal(response);
                             }
+                            [lock unlock];
+                            parser.length = 0;
                         }
                     }
                     packet = MIDIPacketNext(packet);
@@ -178,7 +180,7 @@ int main(int argc, const char **argv) {
             return 1;
         }
 
-        int current = requestValue(input, output, source, destination, reg, response, lock, &level);
+        int current = requestValue(input, output, source, destination, reg, response, lock, &reply);
         if (current < 0 || (reg == monitorRegister && current > unity)) {
             fprintf(stderr, "Cannot verify the Hilo Monitor Out state.\n");
             MIDIClientDispose(client);
@@ -196,13 +198,25 @@ int main(int argc, const char **argv) {
             MIDIClientDispose(client);
             return 1;
         }
-        if (target != current && requestValue(input, output, source, destination, reg, response, lock, &level) != target) {
+        if (target != current && requestValue(input, output, source, destination, reg, response, lock, &reply) != target) {
             fprintf(stderr, "Cannot confirm the new Hilo Monitor Out level.\n");
             MIDIClientDispose(client);
             return 1;
         }
+        if (up && !repeat) {
+            // Confirm the new gain before restoring audio, and preserve other outputs' mute bits.
+            int muteState = requestValue(input, output, source, destination, muteRegister, response, lock, &reply);
+            if (muteState < 0 || ((muteState & monitorMuteMask) &&
+                (sendRegister(output, destination, muteRegister, YES, (UInt8)(muteState & ~monitorMuteMask)) != noErr ||
+                requestValue(input, output, source, destination, muteRegister, response, lock, &reply)
+                    != (muteState & ~monitorMuteMask)))) {
+                fprintf(stderr, "Cannot verify that Hilo Monitor Out is unmuted.\n");
+                MIDIClientDispose(client);
+                return 1;
+            }
+        }
         if (reg == muteRegister) puts((target & monitorMuteMask) == monitorMuteMask ? "Muted" : "Unmuted");
-        else if (repeat && (target == current || (up && target >= holdCeiling) || (down && !target))) puts("Limit");
+        else if (repeat && (target == current || (up && target == unity) || (down && !target))) puts("Limit");
         else if (target == 0) puts("Off");
         else printf("%.1f\n", (target - unity) * 0.5);
         MIDIClientDispose(client);

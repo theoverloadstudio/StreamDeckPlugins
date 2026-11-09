@@ -1,6 +1,6 @@
 # Hilo Monitor for Stream Deck
 
-Control the analog speaker level of a Lynx Hilo connected over USB. Add **Monitor Up**, **Monitor Down**, and **Mute Monitor** to three keys. Mute toggles both Monitor Out channels and retains their volume setting.
+Control the analog speaker level of a Lynx Hilo connected over USB. Add **Monitor Up**, **Monitor Down**, and **Mute Monitor** to three keys. Mute toggles both Monitor Out channels and retains their volume setting. Monitor Up sets the new volume and clears the Monitor Out mute.
 
 | Monitor Out range | Tap step |
 | --- | ---: |
@@ -11,7 +11,7 @@ Control the analog speaker level of a Lynx Hilo connected over USB. Add **Monito
 
 A tap lands on a range boundary before continuing in the next range. One up tap from Off starts at −71.5 dB. One down tap from −71.5 dB turns the level Off.
 
-Holding either volume key starts repeating after 550 ms. Repeats start slowly and accelerate to at most four steps per second. Each repeat changes the level by at most 1 dB, with 0.5 dB steps above −10 dB. Upward repeats stop at −10 dB. Separate taps can continue above that point. Release the key to stop repeating.
+Hold either volume key to ramp at up to 1.5 dB per repeat. From Off, a held up press takes about 2.5 seconds to reach 0 dB under normal USB timing. Release the key to stop repeating.
 
 The optional **Monitor Volume Dial** uses the Stream Deck + encoder, with 0.5 dB per tick and a maximum of 5 dB per event. The plugin reads the hardware level before adjusting it and caps increases at 0 dB.
 
