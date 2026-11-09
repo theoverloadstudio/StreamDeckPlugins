@@ -4,7 +4,11 @@
 
 static const UInt8 manufacturer[] = {0xf0, 0x00, 0x01, 0x54};
 static const unsigned monitorRegister = 0x28;
+static const unsigned muteRegister = 0x220;
+static const int monitorMuteMask = 0x30; // Monitor Out left and right
 static const int unity = 192;
+static const int minimumAudible = 49; // -71.5 dB
+static const int holdCeiling = 172; // -10 dB
 
 static BOOL isHiloEndpoint(MIDIEndpointRef endpoint) {
     CFStringRef name = NULL;
@@ -32,36 +36,51 @@ static BOOL findHilo(MIDIEndpointRef *source, MIDIEndpointRef *destination) {
     return *source && *destination;
 }
 
-static OSStatus sendRegister(MIDIPortRef port, MIDIEndpointRef destination, UInt8 command, UInt8 value) {
-    UInt8 data[] = {0xf0, 0x00, 0x01, 0x54,
-        (command << 3) | (monitorRegister >> 5),
-        ((monitorRegister & 0x1f) << 2) | (value >> 6),
-        (value & 0x3f) << 1, 0xf7};
+static OSStatus sendRegister(MIDIPortRef port, MIDIEndpointRef destination, unsigned reg, BOOL write, UInt8 value) {
+    UInt8 data[11] = {0xf0, 0x00, 0x01, 0x54};
+    size_t length;
+    if (reg < 256) {
+        data[4] = (write ? 0 : 0x68) | (reg >> 5);
+        data[5] = ((reg & 0x1f) << 2) | (value >> 6);
+        data[6] = (value & 0x3f) << 1;
+        length = 8;
+    } else {
+        data[4] = write ? 0x07 : 0x6f;
+        data[5] = reg >> 9;
+        data[6] = (reg >> 2) & 0x7f;
+        data[7] = ((reg & 3) << 5) | (value >> 3);
+        data[8] = (value & 7) << 4;
+        length = write ? 10 : 11;
+    }
+    data[length - 1] = 0xf7;
     MIDIPacketList list;
     MIDIPacket *packet = MIDIPacketListInit(&list);
-    MIDIPacketListAdd(&list, sizeof(list), packet, 0, sizeof(data), data);
+    MIDIPacketListAdd(&list, sizeof(list), packet, 0, length, data);
     return MIDISend(port, destination, &list);
 }
 
-static int monitorValue(const UInt8 *message, size_t length) {
+static int registerValue(const UInt8 *message, size_t length, unsigned reg) {
     // The single-register reply packs eight value bits across two MIDI bytes.
-    if (length != 10 || memcmp(message, manufacturer, sizeof(manufacturer)) != 0 ||
-        message[4] != (0x70 | (monitorRegister >> 5)) ||
-        message[5] != ((monitorRegister & 0x1f) << 2) ||
-        message[6] != 0 || message[9] != 0xf7 || (message[8] & 0x3f) != 0) {
-        return -1;
+    if (length != (reg < 256 ? 10 : 13) || memcmp(message, manufacturer, sizeof(manufacturer)) != 0 ||
+        message[length - 1] != 0xf7) return -1;
+    if (reg < 256) {
+        if (message[4] != (0x70 | (reg >> 5)) || message[5] != ((reg & 0x1f) << 2) ||
+            message[6] != 0 || (message[8] & 0x3f) != 0) return -1;
+        return (message[7] << 1) | (message[8] >> 6);
     }
-    return (message[7] << 1) | (message[8] >> 6);
+    if (message[4] != 0x77 || message[5] != reg >> 9 || message[6] != ((reg >> 2) & 0x7f) ||
+        message[7] != ((reg & 3) << 5) || message[8] || message[9] || (message[11] & 0x3f) != 0) return -1;
+    return (message[10] << 1) | (message[11] >> 6);
 }
 
 static int requestValue(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef source, MIDIEndpointRef destination,
-    dispatch_semaphore_t response, NSLock *lock, int *level) {
+    unsigned reg, dispatch_semaphore_t response, NSLock *lock, int *level) {
     [lock lock];
     *level = -1;
     [lock unlock];
     if (MIDIPortConnectSource(input, source, NULL) != noErr) return -1;
     int result = -1;
-    if (sendRegister(output, destination, 0x0d, 0) == noErr &&
+    if (sendRegister(output, destination, reg, NO, 0) == noErr &&
         dispatch_semaphore_wait(response, dispatch_time(DISPATCH_TIME_NOW, 750 * NSEC_PER_MSEC)) == 0) {
         [lock lock];
         result = *level;
@@ -71,14 +90,43 @@ static int requestValue(MIDIPortRef input, MIDIPortRef output, MIDIEndpointRef s
     return result;
 }
 
+static int buttonTarget(int current, BOOL up, BOOL repeat) {
+    if (up && current < minimumAudible) return minimumAudible;
+    if (!up && current <= minimumAudible) return 0;
+    if (repeat) {
+        if (up && current >= holdCeiling) return current;
+        const int step = current > holdCeiling ? 1 : 2;
+        return up ? MIN(holdCeiling, current + step) : MAX(minimumAudible, current - step);
+    }
+    const int boundaries[] = {minimumAudible, 132, 152, 172, unity};
+    const int steps[] = {12, 5, 2, 1};
+    if (up) {
+        for (int i = 0; i < 4; i++) {
+            if (current < boundaries[i + 1]) return MIN(boundaries[i + 1], current + steps[i]);
+        }
+    } else {
+        for (int i = 3; i >= 0; i--) {
+            if (current > boundaries[i]) return MAX(boundaries[i], current - steps[i]);
+        }
+    }
+    return current;
+}
+
 int main(int argc, const char **argv) {
     @autoreleasepool {
         char *end = NULL;
-        long steps = argc == 2 ? strtol(argv[1], &end, 10) : 0;
-        if (argc != 2 || end == argv[1] || *end || steps < -10 || steps > 10) {
-            fprintf(stderr, "Pass a step count between -10 and 10. Use 0 to read the current level.\n");
+        NSString *action = argc == 2 ? @(argv[1]) : @"";
+        BOOL mute = [action isEqualToString:@"mute"];
+        BOOL readMute = [action isEqualToString:@"read-mute"];
+        BOOL up = [action isEqualToString:@"up"] || [action isEqualToString:@"hold-up"];
+        BOOL down = [action isEqualToString:@"down"] || [action isEqualToString:@"hold-down"];
+        BOOL repeat = [action hasPrefix:@"hold-"];
+        long steps = action.length ? strtol(argv[1], &end, 10) : 0;
+        if (!(mute || readMute || up || down) && (!end || end == argv[1] || *end || steps < -10 || steps > 10)) {
+            fprintf(stderr, "Pass up, down, hold-up, hold-down, mute, read-mute, or a step count between -10 and 10.\n");
             return 1;
         }
+        unsigned reg = mute || readMute ? muteRegister : monitorRegister;
 
         MIDIClientRef client = 0;
         MIDIPortRef input = 0, output = 0;
@@ -92,7 +140,7 @@ int main(int argc, const char **argv) {
         }
 
         __block int level = -1;
-        __block struct { UInt8 message[10]; size_t length; } parser = {0};
+        __block struct { UInt8 message[13]; size_t length; } parser = {0};
         NSLock *lock = [NSLock new];
         dispatch_semaphore_t response = dispatch_semaphore_create(0);
         OSStatus status = MIDIInputPortCreateWithBlock(client, CFSTR("Monitor Out reply"), &input,
@@ -109,7 +157,7 @@ int main(int argc, const char **argv) {
                         }
                         parser.message[parser.length++] = value;
                         if (value == 0xf7) {
-                            int parsed = monitorValue(parser.message, parser.length);
+                            int parsed = registerValue(parser.message, parser.length, reg);
                             parser.length = 0;
                             if (parsed >= 0) {
                                 [lock lock];
@@ -130,24 +178,33 @@ int main(int argc, const char **argv) {
             return 1;
         }
 
-        int current = requestValue(input, output, source, destination, response, lock, &level);
-        if (current < 0 || current > unity) {
-            fprintf(stderr, "Cannot verify the Hilo Monitor Out level.\n");
+        int current = requestValue(input, output, source, destination, reg, response, lock, &level);
+        if (current < 0 || (reg == monitorRegister && current > unity)) {
+            fprintf(stderr, "Cannot verify the Hilo Monitor Out state.\n");
             MIDIClientDispose(client);
             return 1;
         }
-        int target = (int)MIN(unity, MAX(0, current + steps));
-        if (target != current && sendRegister(output, destination, 0, (UInt8)target) != noErr) {
+        int target = current;
+        if (mute) {
+            target = (current & monitorMuteMask) == monitorMuteMask
+                ? current & ~monitorMuteMask : current | monitorMuteMask;
+        }
+        else if (up || down) target = buttonTarget(current, up, repeat);
+        else if (steps) target = (int)MIN(unity, MAX(0, current + steps));
+        if (target != current && sendRegister(output, destination, reg, YES, (UInt8)target) != noErr) {
             fprintf(stderr, "Cannot adjust the Hilo Monitor Out level.\n");
             MIDIClientDispose(client);
             return 1;
         }
-        if (target != current && requestValue(input, output, source, destination, response, lock, &level) != target) {
+        if (target != current && requestValue(input, output, source, destination, reg, response, lock, &level) != target) {
             fprintf(stderr, "Cannot confirm the new Hilo Monitor Out level.\n");
             MIDIClientDispose(client);
             return 1;
         }
-        printf("%.1f\n", (target - unity) * 0.5);
+        if (reg == muteRegister) puts((target & monitorMuteMask) == monitorMuteMask ? "Muted" : "Unmuted");
+        else if (repeat && (target == current || (up && target >= holdCeiling) || (down && !target))) puts("Limit");
+        else if (target == 0) puts("Off");
+        else printf("%.1f\n", (target - unity) * 0.5);
         MIDIClientDispose(client);
         return 0;
     }

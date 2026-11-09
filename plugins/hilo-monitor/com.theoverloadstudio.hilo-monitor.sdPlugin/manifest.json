@@ -8,7 +8,7 @@
   "CategoryIcon": "images/category",
   "Icon": "images/plugin",
   "CodePath": "plugin.mjs",
-  "Version": "1.0.0.0",
+  "Version": "1.1.0.0",
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "7.1" },
   "Nodejs": { "Version": "24" },
@@ -16,19 +16,27 @@
   "Actions": [
     {
       "UUID": "com.theoverloadstudio.hilo-monitor.up",
-      "Name": "Monitor Volume Up",
-      "Tooltip": "Raise Analog Monitor Out by 0.5 dB.",
+      "Name": "Monitor Up",
+      "Tooltip": "Raise Monitor Out. Hold to increase gradually up to -10 dB.",
       "Controllers": ["Keypad"],
       "Icon": "images/action",
       "States": [{ "Image": "images/up", "ShowTitle": false }]
     },
     {
       "UUID": "com.theoverloadstudio.hilo-monitor.down",
-      "Name": "Monitor Volume Down",
-      "Tooltip": "Lower Analog Monitor Out by 0.5 dB.",
+      "Name": "Monitor Down",
+      "Tooltip": "Lower Monitor Out. Hold to decrease gradually.",
       "Controllers": ["Keypad"],
       "Icon": "images/action",
       "States": [{ "Image": "images/down", "ShowTitle": false }]
+    },
+    {
+      "UUID": "com.theoverloadstudio.hilo-monitor.mute",
+      "Name": "Mute Monitor",
+      "Tooltip": "Toggle the hardware mute for the left and right Monitor Out channels.",
+      "Controllers": ["Keypad"],
+      "Icon": "images/action",
+      "States": [{ "Image": "images/mute", "ShowTitle": false }]
     },
     {
       "UUID": "com.theoverloadstudio.hilo-monitor.dial",

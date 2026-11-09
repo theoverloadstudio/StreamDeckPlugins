@@ -19,6 +19,9 @@ const { values } = parseArgs({
 attachMonitorActions(
     new WebSocket(`ws://127.0.0.1:${values.port}`),
     { event: values.registerEvent, uuid: values.pluginUUID },
-    (steps) => run(helper, [String(steps)], { timeout: 2500 }),
+    async (command) => {
+        const { stdout } = await run(helper, [String(command)], { timeout: 2500 });
+        return stdout.trim();
+    },
     (error) => console.error("Hilo Monitor:", error.stderr?.trim() || error.message),
 );
