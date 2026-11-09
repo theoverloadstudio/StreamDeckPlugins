@@ -176,7 +176,7 @@ static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
     return !cancelled;
 }
 
-static double holdRate(int gain, BOOL up, double elapsed) {
+static double baseHoldRate(int gain, BOOL up, double elapsed) {
     const double dbBelowUnity = (unity - gain) * 0.5;
     const double ease = smoothstep(elapsed / (up ? 0.38 : 0.28));
     const double range = smoothstep(dbBelowUnity / 26.0);
@@ -184,6 +184,11 @@ static double holdRate(int gain, BOOL up, double elapsed) {
         : 9 + (41 - 9 * smoothstep(dbBelowUnity / 60.0)) * ease;
     const double quiet = smoothstep((dbBelowUnity - 64) / 19.0);
     return rate * (1 - quiet) + (0.5 / 0.003) * quiet;
+}
+
+static double holdRate(int gain, BOOL up, double elapsed) {
+    // Compress both the acceleration envelope and time between confirmed steps.
+    return up ? 2 * baseHoldRate(gain, YES, 2 * elapsed) : baseHoldRate(gain, NO, elapsed);
 }
 
 static BOOL holdGain(MIDIPortRef output, MIDIEndpointRef destination, int *current, BOOL up,

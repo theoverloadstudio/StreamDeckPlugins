@@ -1,6 +1,6 @@
 # Hilo Monitor for Stream Deck
 
-Control the analog speaker level of a Lynx Hilo connected over USB. Hilo Remote can be closed. Add **Monitor Up** (green), **Monitor Down** (orange), and **Mute Monitor** (red). The keys pulse while held. Mute shows **LIVE** or **MUTED** based on the hardware, including changes made from the Hilo itself. Mute and Unmute toggle both Monitor Out channels without moving the analog volume. A new Up tap while muted also unmutes without changing the level; holding Up while muted keeps the monitors muted.
+Control the analog speaker level of a Lynx Hilo connected over USB. Hilo Remote can be closed. Add **Monitor Up** (green), **Monitor Down** (orange), and **Mute Monitor** (red when muted). Both volume keys show the current analog fader position, including during a ramp. The keys pulse while held. Mute shows **LIVE** or **MUTED** based on the hardware, including changes made from the Hilo itself. Mute and Unmute toggle both Monitor Out channels without moving the analog volume. A new Up tap while muted also unmutes without changing the level; holding Up while muted keeps the monitors muted.
 
 Add **Dim Monitor** to a fourth key. It displays the live analog Monitor Out setting in dB, the same level the Hilo shows in Analog mode. Press it to fade both Monitor Out digital channels down by 15 dB and light the amber indicator; press again to fade back. The displayed number remains the analog setting while Dim is active. If the digital channels are already close to their minimum, Dim uses the available headroom equally on both channels. If another control changes the digital levels while Dim is on, the key will warn on the next press and will not restore the old level.
 
@@ -10,7 +10,7 @@ Single taps use the same series of stops in both directions. Spacing gradually g
 
 An Up tap from Off unmutes at the current level. A subsequent Up tap brings the level to −71.5 dB. A Down tap at −71.5 dB fades to −95.5 dB and mutes both channels for Off.
 
-Hold either volume key for a continuous ramp that starts gently and accelerates. Volume Down accelerates faster; Volume Up gradually slows as it approaches 0 dB. The hold starts after about a fifth of a second; a shorter press sends one tap step on release. Every half-decibel step is verified over USB. Releasing a hold cancels the ramp, so no further steps are sent. A hold also times out after 3.5 seconds if the release event is missed. Reversing direction or pressing Mute cancels earlier volume input.
+Hold either volume key for a continuous ramp that starts gently and accelerates. Held Up runs at twice its previous pace and still slows as it approaches 0 dB. The hold starts after about a fifth of a second; a shorter press sends one tap step on release. Every half-decibel step is verified over USB, so a slow connection may extend the sweep. Releasing a hold cancels the ramp, so no further steps are sent. A hold also times out after 3.5 seconds if the release event is missed. Reversing direction or pressing Mute cancels earlier volume input.
 
 If the Hilo stops answering over USB, the plugin stops the ramp and shows a warning on the key. Once the connection is back, press the key again to start from the level reported by the Hilo.
 

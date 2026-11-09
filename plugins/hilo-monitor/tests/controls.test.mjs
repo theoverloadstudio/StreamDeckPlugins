@@ -128,23 +128,29 @@ test("visible keys show the verified Hilo level, external mute changes and disco
         if (command === 2) onGain(151);
         return "ok";
     });
-    const title = value => sent.some(x => x.context === "dim" && x.event === "setTitle" && x.payload.title === value);
-    const image = value => sent.some(x => x.context === "mute" && x.event === "setImage" && x.payload.image === value);
+    const image = (key, fragment) => sent.some(x => x.context === key && x.event === "setImage" &&
+        decodeURIComponent(x.payload.image.slice("data:image/svg+xml,".length)).includes(fragment));
     event("willAppear", "dim");
     event("willAppear", "mute");
-    await until(() => title("−22.5") && image("images/mute-live.svg"));
+    event("willAppear", "up");
+    event("willAppear", "down");
+    await until(() => image("dim", 'aria-label="-22.5 dB"') && image("mute", ">LIVE</text>") &&
+        image("up", 'width="38.28"') && image("down", 'width="38.28"'));
     assert.ok(sent.some(x => x.context === "dim" && x.event === "setState" && x.payload.state === 1));
     status = "STATUS 151 3";
     event("dialRotate", "dial", { ticks: 2 });
-    await until(() => title("−20.5") && image("images/mute-muted.svg"));
+    await until(() => image("dim", 'aria-label="-20.5 dB"') && image("mute", ">MUTED</text>") &&
+        image("up", 'width="39.32"') && image("down", 'width="39.32"'));
     sent.length = 0;
     status = undefined;
-    await until(() => title("—") && image("images/mute-unknown.svg"));
+    await until(() => image("dim", "No level available") && image("mute", ">NO LINK</text>"));
     event("willDisappear", "dim");
     event("willDisappear", "mute");
+    event("willDisappear", "up");
+    event("willDisappear", "down");
     const count = calls.length;
     await pause(720);
-    assert.equal(calls.length, count, "no status polling with both displays hidden");
+    assert.equal(calls.length, count, "no status polling with displays hidden");
 });
 
 test("a hardware status poll yields immediately to a button press", async t => {

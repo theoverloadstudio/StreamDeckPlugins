@@ -1,3 +1,5 @@
+import { keyImage } from "./key-art.mjs";
+
 const pluginId = "com.theoverloadstudio.hilo-monitor";
 const holdDelayMs = 220;
 const maxHoldMs = 3500;
@@ -24,11 +26,11 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     let queuedJobs = 0;
     let analogGain;
     let muteBits;
+    let dimActive = false;
     const downKeys = new Map();
     const pulses = new Map();
     const modeKeys = new Map();
     const statusKeys = new Map();
-    const muteImages = ["live", "left", "right", "muted"];
 
     function send(event, context, payload) {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ event, context, payload }));
@@ -37,25 +39,21 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     function showModeState(result) {
         const match = /^(Dim|Mono) (On|Off)$/.exec(result);
         if (!match) return;
+        if (match[1] === "Dim") dimActive = match[2] === "On";
         for (const [context, { key }] of modeKeys) {
             if (key === match[1].toLowerCase()) send("setState", context, { state: match[2] === "On" ? 1 : 0 });
         }
+        if (match[1] === "Dim") renderStatus();
     }
 
     function renderStatus() {
         for (const [context, view] of statusKeys) {
-            if (view.key === "dim") {
-                const title = analogGain === undefined ? "—" : analogGain === 0 ? "OFF" :
-                    ((analogGain - 192) * 0.5).toFixed(1).replace("-", "−");
-                if (view.last !== title) send("setTitle", context, { title });
-                view.last = title;
-            } else {
-                const image = muteImages[muteBits] ?? "unknown";
-                const suffix = (muteBits === 0 || muteBits === 3) && pulses.get(context)?.bright ? "-pulse" : "";
-                const path = `images/mute-${image}${suffix}.svg`;
-                if (view.last !== path) send("setImage", context, { image: path });
-                view.last = path;
-            }
+            const bright = pulses.get(context)?.bright ?? false;
+            const signature = view.key === "dim" ? `${analogGain}:${dimActive}` :
+                `${view.key === "mute" ? muteBits : analogGain}:${bright}`;
+            if (view.last === signature) continue;
+            view.last = signature;
+            send("setImage", context, { image: keyImage(view.key, { gain: analogGain, active: dimActive, muteBits, bright }) });
         }
     }
 
@@ -74,17 +72,13 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         }, delay);
     }
 
-    function startPulse(context, key) {
-        const pulse = { bright: true, key };
-        const render = () => {
-            if (key === "mute") renderStatus();
-            else send("setImage", context, { image: `images/${key}${pulse.bright ? "-pulse" : ""}.svg` });
-        };
+    function startPulse(context) {
+        const pulse = { bright: true };
         pulses.set(context, pulse);
-        render();
+        renderStatus();
         pulse.timer = setInterval(() => {
             pulse.bright = !pulse.bright;
-            render();
+            renderStatus();
         }, pulseIntervalMs);
     }
 
@@ -94,8 +88,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         if (!pulse) return;
         clearInterval(pulse.timer);
         pulses.delete(context);
-        if (pulse.key === "mute") renderStatus();
-        else send("setImage", context, {});
+        renderStatus();
     }
 
     function stopHold() {
@@ -205,7 +198,9 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         const { event, action, context, device, payload } = JSON.parse(data);
         const key = action?.startsWith(`${pluginId}.`) ? action.slice(pluginId.length + 1) : "";
         if (event === "willAppear") {
-            if (key === "dim" || key === "mute") {
+            if (["dim", "mute", "up", "down"].includes(key)) {
+                // Remove the old Dim title overlay on keys carried over from v1.9.
+                if (key === "dim") send("setTitle", context, { title: "" });
                 statusKeys.set(context, { key, device });
                 renderStatus();
                 scheduleStatus(0);
@@ -261,7 +256,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         if (!["up", "down", "mute", ...modes].includes(key) || downKeys.has(context)) return;
         if (!payload?.isInMultiAction && typeof context === "string") {
             downKeys.set(context, device);
-            if (!modes.includes(key)) startPulse(context, key);
+            if (!modes.includes(key)) startPulse(context);
         }
 
         if (key === "mute") {

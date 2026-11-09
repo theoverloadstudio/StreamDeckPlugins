@@ -8,7 +8,7 @@
   "CategoryIcon": "images/category",
   "Icon": "images/plugin",
   "CodePath": "plugin.mjs",
-  "Version": "1.9.0.0",
+  "Version": "1.10.0.0",
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "7.1" },
   "Nodejs": { "Version": "24" },
@@ -47,8 +47,8 @@
       "UserTitleEnabled": false,
       "Icon": "images/action",
       "States": [
-        { "Image": "images/dim", "ShowTitle": true, "Title": "—", "FontSize": 16, "FontStyle": "Bold", "TitleAlignment": "middle", "TitleColor": "#FFF0D0" },
-        { "Image": "images/dim-on", "ShowTitle": true, "Title": "—", "FontSize": 16, "FontStyle": "Bold", "TitleAlignment": "middle", "TitleColor": "#FFF0D0" }
+        { "Image": "images/dim", "ShowTitle": false },
+        { "Image": "images/dim-on", "ShowTitle": false }
       ]
     },
     {

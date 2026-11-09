@@ -33,5 +33,13 @@ int main(void) {
     assert(buttonTarget(minimumGain, YES, 3) == minimumAudible);
     assert(holdRate(132, YES, 0.35) > holdRate(132, YES, 0.0));
     assert(holdRate(191, YES, 0.5) < holdRate(132, YES, 0.5));
+    double oldSweep = 0, newSweep = 0;
+    for (int level = minimumGain + 1; level < unity; level++) {
+        oldSweep += 0.5 / baseHoldRate(level, YES, oldSweep);
+        newSweep += 0.5 / holdRate(level, YES, newSweep);
+        assert(holdRate(level, NO, 0.2) == baseHoldRate(level, NO, 0.2));
+    }
+    assert(fabs(oldSweep - 2 * newSweep) < 1e-9);
+    printf("Full upward sweep with immediate confirmation: %.2f s vs %.2f s.\n", newSweep, oldSweep);
     puts("Reversible detents, acceleration, range caps, Off and hold pacing passed.");
 }
