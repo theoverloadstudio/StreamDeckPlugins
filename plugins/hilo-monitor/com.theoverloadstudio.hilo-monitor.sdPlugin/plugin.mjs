@@ -20,9 +20,24 @@ const { values } = parseArgs({
     },
 });
 
-async function runHelper(args, signal) {
+async function runHelper(args, signal, onGain) {
     signal.throwIfAborted();
-    const operation = run(helper, args.map(String), { signal, timeout: 12000 });
+    const operation = run(helper, args.map(String), {
+        signal,
+        timeout: 12000,
+        ...(onGain && { env: { ...process.env, HILO_MONITOR_PROGRESS: "1" } }),
+    });
+    if (onGain) {
+        let partial = "";
+        operation.child.stdout.setEncoding("utf8").on("data", chunk => {
+            const lines = (partial + chunk).split("\n");
+            partial = lines.pop();
+            for (const line of lines) {
+                const match = /^LEVEL (\d+)$/.exec(line);
+                if (match && !signal.aborted) onGain(Number(match[1]));
+            }
+        });
+    }
     const closed = new Promise(resolve => operation.child.once("close", resolve));
     let forceExit;
     const armForceExit = () => {
@@ -32,7 +47,7 @@ async function runHelper(args, signal) {
     signal.addEventListener("abort", armForceExit, { once: true });
     try {
         const { stdout } = await operation;
-        return stdout.trim();
+        return stdout.replace(/^LEVEL \d+\n/gm, "").trim();
     } finally {
         await closed;
         clearTimeout(watchdog);
@@ -47,10 +62,10 @@ const mono = createMono(runHelper, join(stateDir, "mono.json"));
 attachMonitorActions(
     new WebSocket(`ws://127.0.0.1:${values.port}`),
     { event: values.registerEvent, uuid: values.pluginUUID },
-    (command, signal, trimDb, tapTiers) => {
+    (command, signal, trimDb, tapTiers, onGain) => {
         if (command === "dim" || command === "read-dim") return dim(command === "dim", signal);
         if (command === "mono" || command === "read-mono") return mono(command === "mono", signal, trimDb);
-        return runHelper([command, ...(tapTiers ?? [])], signal);
+        return runHelper([command, ...(tapTiers ?? [])], signal, onGain);
     },
     (error) => console.error("Hilo Monitor:", error.stderr?.trim() ||
         (error.signal ? `USB command stopped (${error.signal}).` : error.message)),

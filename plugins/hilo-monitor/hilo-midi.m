@@ -19,6 +19,9 @@ static const int minimumAudible = 49; // -71.5 dB
 static const int fineRange = 172; // -10 dB
 enum { routeGains = 64, routeBytes = 72 };
 static volatile sig_atomic_t cancelled;
+static BOOL quickStatus;
+static BOOL reportProgress;
+static double lastProgress;
 
 static void cancelCommand(int signalNumber) {
     cancelled = 1;
@@ -28,6 +31,15 @@ static double monotonicTime(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return now.tv_sec + now.tv_nsec / 1e9;
+}
+
+static void publishGain(int value, BOOL final) {
+    if (!reportProgress) return;
+    const double now = monotonicTime();
+    if (!final && now - lastProgress < 0.08) return;
+    lastProgress = now;
+    printf("LEVEL %d\n", value);
+    fflush(stdout);
 }
 
 typedef struct {
@@ -112,8 +124,9 @@ static int receiveValue(MIDIPortRef output, MIDIEndpointRef destination, unsigne
     // A write is sent at most once. If a stale reply arrives, read the register
     // again and keep the ramp stopped until this exact half-decibel is confirmed.
     if (expected < 0 || sendRegister(output, destination, reg, YES, (UInt8)expected) == noErr) {
-        const int waitMs = expected < 0 ? 250 : 80;
-        for (int attempt = 0; attempt < 3; attempt++) {
+        const int waitMs = quickStatus ? 45 : expected < 0 ? 250 : 80;
+        for (int attempt = 0; attempt < (quickStatus ? 2 : 3); attempt++) {
+            if (quickStatus && cancelled) break;
             if (sendRegister(output, destination, reg, NO, 0) != noErr) break;
             if (dispatch_semaphore_wait(response, dispatch_time(DISPATCH_TIME_NOW, waitMs * NSEC_PER_MSEC)) == 0) break;
         }
@@ -152,6 +165,7 @@ static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
             return NO;
         }
         current = next;
+        publishGain(current, NO);
         if (current != target) {
             const double quiet = smoothstep(((unity - current) * 0.5 - 64) / 19.0);
             const double nearTop = 1 - smoothstep((unity - current) * 0.5 / 18.0);
@@ -181,6 +195,7 @@ static BOOL holdGain(MIDIPortRef output, MIDIEndpointRef destination, int *curre
         const int next = *current + (up ? 1 : -1);
         if (!setValue(output, destination, monitorRegister, *current, next, response, lock, reply)) return NO;
         *current = next;
+        publishGain(*current, NO);
         if (next == end || cancelled) break;
         const double period = 0.5 / holdRate(next, up, stepStart - start);
         const double remaining = period - (monotonicTime() - stepStart);
@@ -213,13 +228,13 @@ static int buttonTarget(int current, BOOL up, int tier) {
     if (up && current < minimumAudible) return minimumAudible;
     if (!up && current <= minimumAudible) return MIN(current, minimumGain);
     int target = current;
-    for (int i = 0; i < tier; i++) {
+    for (int i = 0; i < (tier == 3 ? 4 : tier); i++) {
         target = adjacentDetent(target, up);
     }
     if (tier == 1) return target;
-    // Rapid taps get at most 4.5 dB each, tapering to 1 dB near unity.
+    // Rapid taps get at most 5.5 dB each, tapering to 1 dB near unity.
     const double attenuation = (unity - current) * 0.5;
-    const int cap = 2 + (int)lround(7 * smoothstep((attenuation - 10) / 26.0));
+    const int cap = 2 + (int)lround(9 * smoothstep((attenuation - 10) / 26.0));
     return up ? MIN(target, current + cap) : MAX(target, current - cap);
 }
 
@@ -295,6 +310,9 @@ int main(int argc, const char **argv) {
         signal(SIGTERM, cancelCommand);
         char *end = NULL;
         NSString *action = argc >= 2 ? @(argv[1]) : @"";
+        quickStatus = [action isEqualToString:@"read-status"];
+        reportProgress = getenv("HILO_MONITOR_PROGRESS") != NULL;
+        lastProgress = 0;
         BOOL mute = [action isEqualToString:@"mute"];
         BOOL forceMute = [action isEqualToString:@"force-mute"];
         BOOL readMute = [action isEqualToString:@"read-mute"];
@@ -336,7 +354,7 @@ int main(int argc, const char **argv) {
             return 1;
         }
         long steps = action.length ? strtol(argv[1], &end, 10) : 0;
-        if (!(mute || forceMute || readMute || up || down || readDigital || setDigital || readRoute || setRoute) &&
+        if (!(quickStatus || mute || forceMute || readMute || up || down || readDigital || setDigital || readRoute || setRoute) &&
             (!end || end == argv[1] || *end || steps < -10 || steps > 10)) {
             fprintf(stderr, "Invalid Monitor Out command.\n");
             return 1;
@@ -390,6 +408,21 @@ int main(int argc, const char **argv) {
             fprintf(stderr, "Cannot open the Hilo MIDI input.\n");
             MIDIClientDispose(client);
             return 1;
+        }
+
+        if (quickStatus) {
+            const int gain = requestValue(output, destination, monitorRegister, response, lock, &reply);
+            const int muted = gain >= 0 && gain <= unity && !cancelled
+                ? requestValue(output, destination, muteRegister, response, lock, &reply) : -1;
+            if (muted < 0 || cancelled) {
+                fprintf(stderr, "Cannot read the current Hilo Monitor Out status.\n");
+                MIDIClientDispose(client);
+                return 1;
+            }
+            printf("STATUS %d %d\n", gain, (muted & monitorMuteMask) >> 4);
+            fflush(stdout);
+            MIDIClientDispose(client);
+            return 0;
         }
 
         if (readRoute || setRoute) {
@@ -496,6 +529,7 @@ int main(int argc, const char **argv) {
             MIDIClientDispose(client);
             return 1;
         }
+        if (reg == monitorRegister) publishGain(target, YES);
         if (reg == muteRegister) puts((target & monitorMuteMask) == monitorMuteMask ? "Muted" : "Unmuted");
         else if (repeat) puts("Limit");
         else if ((down && target <= minimumGain) || target == 0) puts("Off");

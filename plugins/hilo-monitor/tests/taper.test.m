@@ -19,7 +19,7 @@ int main(void) {
                 const int target = buttonTarget(level, up, tier);
                 assert(target >= minimumAudible && target <= unity);
                 assert((target - previous) * direction >= 0);
-                assert(abs(target - level) <= (level >= unity - 20 ? 2 : 9));
+                assert(abs(target - level) <= (level >= unity - 20 ? 2 : 11));
                 previous = target;
             }
         }
@@ -27,7 +27,8 @@ int main(void) {
     assert(buttonTarget(172, YES, 1) == 173);
     assert(buttonTarget(172, YES, 3) == 174);
     assert(buttonTarget(152, YES, 3) > buttonTarget(152, YES, 1));
-    assert(buttonTarget(92, NO, 3) < buttonTarget(92, NO, 1));
+    assert(buttonTarget(92, NO, 3) == 81);
+    assert(buttonTarget(92, YES, 3) == 103);
     assert(buttonTarget(minimumAudible, NO, 3) == minimumGain);
     assert(buttonTarget(minimumGain, YES, 3) == minimumAudible);
     assert(holdRate(132, YES, 0.35) > holdRate(132, YES, 0.0));
