@@ -7,12 +7,18 @@
 #include <unistd.h>
 
 static const UInt8 manufacturer[] = {0xf0, 0x00, 0x01, 0x54};
-static const unsigned monitorRegister = 0x28;
-static const unsigned muteRegister = 0x220;
+typedef struct {
+    unsigned gainRegister;
+    unsigned muteRegister;
+    unsigned muteShift;
+} AudioOutput;
+
+static const AudioOutput monitorOut = {0x28, 0x220, 4};
+// Lynx maps Phones L/R to output channels 2/3 and Monitor L/R to 4/5.
+static const AudioOutput phonesOut = {0x29, 0x220, 2};
 static const unsigned monitorDigital[] = {0x204, 0x205};
 static const int digitalUnity = 24;
 static const int digitalFloor = 216;
-static const int monitorMuteMask = 0x30; // Monitor Out left and right
 static const int unity = 192;
 static const int minimumGain = 1; // -95.5 dB; original Hilo does not accept a zero write
 static const int minimumAudible = 49; // -71.5 dB
@@ -154,14 +160,15 @@ static double smoothstep(double value) {
 }
 
 static BOOL rampGain(MIDIPortRef output, MIDIEndpointRef destination,
-    int current, int target, BOOL button, dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
+    unsigned gainRegister, int current, int target, BOOL button,
+    dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     const int direction = target > current ? 1 : -1;
     const double deadline = monotonicTime() + 5;
     while (current != target) {
         if (cancelled || monotonicTime() >= deadline) return NO;
         const int next = current + direction;
 
-        if (!setValue(output, destination, monitorRegister, current, next, response, lock, reply)) {
+        if (!setValue(output, destination, gainRegister, current, next, response, lock, reply)) {
             return NO;
         }
         current = next;
@@ -191,14 +198,14 @@ static double holdRate(int gain, BOOL up, double elapsed) {
     return up ? 2 * baseHoldRate(gain, YES, 2 * elapsed) : baseHoldRate(gain, NO, elapsed);
 }
 
-static BOOL holdGain(MIDIPortRef output, MIDIEndpointRef destination, int *current, BOOL up,
+static BOOL holdGain(MIDIPortRef output, MIDIEndpointRef destination, unsigned gainRegister, int *current, BOOL up,
     dispatch_semaphore_t response, NSLock *lock, RegisterReply *reply) {
     const int end = up ? unity : MIN(*current, minimumGain);
     const double start = monotonicTime();
     while (*current != end && !cancelled && monotonicTime() - start < 3.45) {
         const double stepStart = monotonicTime();
         const int next = *current + (up ? 1 : -1);
-        if (!setValue(output, destination, monitorRegister, *current, next, response, lock, reply)) return NO;
+        if (!setValue(output, destination, gainRegister, *current, next, response, lock, reply)) return NO;
         *current = next;
         publishGain(*current, NO);
         if (next == end || cancelled) break;
@@ -313,6 +320,15 @@ static BOOL rampDigital(MIDIPortRef output, MIDIEndpointRef destination, int cur
 int main(int argc, const char **argv) {
     @autoreleasepool {
         signal(SIGTERM, cancelCommand);
+        const BOOL phones = argc >= 2 && strcmp(argv[1], "phones") == 0;
+        if (phones) {
+            argv++;
+            argc--;
+        }
+        const AudioOutput audio = phones ? phonesOut : monitorOut;
+        const unsigned gainRegister = audio.gainRegister;
+        const unsigned muteRegister = audio.muteRegister;
+        const int muteMask = 3 << audio.muteShift;
         char *end = NULL;
         NSString *action = argc >= 2 ? @(argv[1]) : @"";
         quickStatus = [action isEqualToString:@"read-status"];
@@ -328,6 +344,7 @@ int main(int argc, const char **argv) {
         BOOL setDigital = [action isEqualToString:@"set-digital"];
         BOOL readRoute = [action isEqualToString:@"read-route"];
         BOOL setRoute = [action isEqualToString:@"set-route"];
+        if (phones && (readDigital || setDigital || readRoute || setRoute)) return 1;
         BOOL buttonTap = (up || down) && !repeat;
         int tapTiers[2] = {1, 1};
         int tapCount = 1;
@@ -361,10 +378,10 @@ int main(int argc, const char **argv) {
         long steps = action.length ? strtol(argv[1], &end, 10) : 0;
         if (!(quickStatus || mute || forceMute || readMute || up || down || readDigital || setDigital || readRoute || setRoute) &&
             (!end || end == argv[1] || *end || steps < -10 || steps > 10)) {
-            fprintf(stderr, "Invalid Monitor Out command.\n");
+            fprintf(stderr, "Invalid Hilo output command.\n");
             return 1;
         }
-        unsigned reg = mute || forceMute || readMute ? muteRegister : monitorRegister;
+        unsigned reg = mute || forceMute || readMute ? muteRegister : gainRegister;
 
         MIDIClientRef client = 0;
         MIDIPortRef input = 0, output = 0;
@@ -416,15 +433,15 @@ int main(int argc, const char **argv) {
         }
 
         if (quickStatus) {
-            const int gain = requestValue(output, destination, monitorRegister, response, lock, &reply);
+            const int gain = requestValue(output, destination, gainRegister, response, lock, &reply);
             const int muted = gain >= 0 && gain <= unity && !cancelled
                 ? requestValue(output, destination, muteRegister, response, lock, &reply) : -1;
             if (muted < 0 || cancelled) {
-                fprintf(stderr, "Cannot read the current Hilo Monitor Out status.\n");
+                fprintf(stderr, "Cannot read the current Hilo output status.\n");
                 MIDIClientDispose(client);
                 return 1;
             }
-            printf("STATUS %d %d\n", gain, (muted & monitorMuteMask) >> 4);
+            printf("STATUS %d %d\n", gain, (muted & muteMask) >> audio.muteShift);
             fflush(stdout);
             MIDIClientDispose(client);
             return 0;
@@ -478,16 +495,16 @@ int main(int argc, const char **argv) {
         }
 
         int current = requestValue(output, destination, reg, response, lock, &reply);
-        if (current < 0 || (reg == monitorRegister && current > unity)) {
-            fprintf(stderr, "Cannot verify the Hilo Monitor Out state.\n");
+        if (current < 0 || (reg == gainRegister && current > unity)) {
+            fprintf(stderr, "Cannot verify the Hilo output state.\n");
             MIDIClientDispose(client);
             return 1;
         }
         int target = current;
         BOOL verified;
         if (mute || forceMute) {
-            target = !forceMute && (current & monitorMuteMask) == monitorMuteMask
-                ? current & ~monitorMuteMask : current | monitorMuteMask;
+            target = !forceMute && (current & muteMask) == muteMask
+                ? current & ~muteMask : current | muteMask;
             verified = !cancelled && setValue(output, destination, reg, current, target, response, lock, &reply);
         } else if (readMute) {
             verified = YES;
@@ -501,11 +518,11 @@ int main(int argc, const char **argv) {
             int muteState = up
                 ? requestValue(output, destination, muteRegister, response, lock, &reply) : 0;
             if (muteState < 0) {
-                fprintf(stderr, "Cannot read the Hilo Monitor Out mute state.\n");
+                fprintf(stderr, "Cannot read the Hilo output mute state.\n");
                 MIDIClientDispose(client);
                 return 1;
             }
-            if (muteState & monitorMuteMask) {
+            if (muteState & muteMask) {
                 if (repeat) {
                     puts("Limit");
                     MIDIClientDispose(client);
@@ -514,28 +531,28 @@ int main(int argc, const char **argv) {
                 // A fresh Up tap unmutes without rewriting the listening level.
                 target = current;
                 verified = !cancelled && setValue(output, destination, muteRegister, muteState,
-                    muteState & ~monitorMuteMask, response, lock, &reply);
+                    muteState & ~muteMask, response, lock, &reply);
             } else {
                 if (repeat) {
-                    verified = holdGain(output, destination, &target, up, response, lock, &reply);
+                    verified = holdGain(output, destination, gainRegister, &target, up, response, lock, &reply);
                 } else {
-                    verified = rampGain(output, destination, current, target, buttonTap, response, lock, &reply);
+                    verified = rampGain(output, destination, gainRegister, current, target, buttonTap, response, lock, &reply);
                 }
                 if (verified && down && target <= minimumGain) {
                     int muted = requestValue(output, destination, muteRegister, response, lock, &reply);
                     verified = !cancelled && muted >= 0 && setValue(output, destination, muteRegister, muted,
-                        muted | monitorMuteMask, response, lock, &reply);
+                        muted | muteMask, response, lock, &reply);
                 }
             }
         }
 
         if (!verified) {
-            fprintf(stderr, "Cannot confirm the new Hilo Monitor Out state.\n");
+            fprintf(stderr, "Cannot confirm the new Hilo output state.\n");
             MIDIClientDispose(client);
             return 1;
         }
-        if (reg == monitorRegister) publishGain(target, YES);
-        if (reg == muteRegister) puts((target & monitorMuteMask) == monitorMuteMask ? "Muted" : "Unmuted");
+        if (reg == gainRegister) publishGain(target, YES);
+        if (reg == muteRegister) puts((target & muteMask) == muteMask ? "Muted" : "Unmuted");
         else if (repeat) puts("Limit");
         else if ((down && target <= minimumGain) || target == 0) puts("Off");
         else printf("%.1f\n", (target - unity) * 0.5);

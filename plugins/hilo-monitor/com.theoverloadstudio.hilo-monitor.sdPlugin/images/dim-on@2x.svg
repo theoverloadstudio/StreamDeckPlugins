@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 72 72">
-<defs><linearGradient id="face" x2=".14" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#f3e9d8"/><stop offset=".62" stop-color="#e9decc"/><stop offset="1" stop-color="#d3c1a8"/></linearGradient></defs>
+<defs><linearGradient id="face" x2=".14" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#ffdf98"/><stop offset=".62" stop-color="#efbd66"/><stop offset="1" stop-color="#d4913b"/></linearGradient></defs>
 <rect x="1" y="3" width="70" height="68" rx="12" fill="#3d3328"/>
 <rect x="1.5" y="1.5" width="69" height="67" rx="11" fill="#b6a38a" stroke="#fff5e4"/>
 <rect x="4" y="4" width="64" height="62" rx="9" fill="url(#face)" stroke="#8f7d65" stroke-width=".8"/>
 <path d="M10 10q2-3 6-3h39q4 0 6 3" fill="none" stroke="#fff8e9" stroke-width=".9" opacity=".72" stroke-linecap="round"/>
-<text x="36" y="21" fill="#30281f" text-anchor="middle" font-family="Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1.6">DIM</text><circle cx="56" cy="17" r="4.1" fill="#b27b36" stroke="#493d30" stroke-opacity=".35" stroke-width=".7"/><path d="M54 15q2-1.5 4 0" fill="none" stroke="#fff7e4" opacity=".45" stroke-linecap="round"/><g aria-label="No level available"><path d="M28 37h16" stroke="#726353" stroke-width="2.4" stroke-linecap="round"/></g><text x="36" y="58" fill="#584a3d" text-anchor="middle" font-family="Arial,sans-serif" font-size="6.3" font-weight="700" letter-spacing="0.5">MON OUT · dB</text>
+<text x="36" y="21" fill="#30281f" text-anchor="middle" font-family="Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1.2">DIM ON</text><circle cx="62" cy="17" r="4.1" fill="#9e501c" stroke="#493d30" stroke-opacity=".35" stroke-width=".7"/><path d="M60 15q2-1.5 4 0" fill="none" stroke="#fff7e4" opacity=".45" stroke-linecap="round"/><g aria-label="No level available"><path d="M28 37h16" stroke="#726353" stroke-width="2.4" stroke-linecap="round"/></g><text x="36" y="58" fill="#584a3d" text-anchor="middle" font-family="Arial,sans-serif" font-size="6.3" font-weight="700" letter-spacing="0.5">MON OUT · dB</text>
 </svg>

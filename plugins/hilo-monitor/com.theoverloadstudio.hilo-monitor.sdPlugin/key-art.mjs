@@ -41,6 +41,10 @@ function lamp(x, y, color) {
     return `<circle cx="${x}" cy="${y}" r="4.1" fill="${color}" stroke="#493d30" stroke-opacity=".35" stroke-width=".7"/><path d="M${x - 2} ${y - 2}q2-1.5 4 0" fill="none" stroke="#fff7e4" opacity=".45" stroke-linecap="round"/>`;
 }
 
+function headphones(y, color = ink) {
+    return `<path transform="translate(0 ${y})" d="M28 9V8a8 8 0 0 1 16 0v1M28 8h2v7h-2a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2zm16 0h-2v7h2a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2z" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
+
 function levelBar(gain, color) {
     // Follow the analog fader setting, independent of Mute and Dim.
     const level = gain === undefined ? 0 : gain / 192;
@@ -48,15 +52,21 @@ function levelBar(gain, color) {
     return `<g aria-label="Monitor Out level"><rect x="11" y="51" width="50" height="7" rx="3.5" fill="#b9a994"/>${width ? `<rect x="11" y="51" width="${width.toFixed(2)}" height="7" rx="${Math.min(3.5, width / 2)}" fill="${color}"/>` : ""}<path d="M21 52v5m10-5v5m10-5v5m10-5v5" stroke="${ivory}" opacity=".46" stroke-width=".75"/></g>`;
 }
 
-export function keySvg(key, { gain, active, muteBits, bright = false } = {}, size = 144) {
+export function keySvg(key, { gain, active, muteBits, phones = false, bright = false } = {}, size = 144) {
     let content;
+    let face = [bright ? "#fff9ed" : "#f3e9d8", ivory, "#d3c1a8"];
     if (key === "dim") {
-        content = label("DIM", 21, 10, 1.6) + lamp(56, 17, active ? accents.amber : "#b8a992") +
+        if (active) face = ["#ffdf98", "#efbd66", "#d4913b"];
+        content = label(active ? "DIM ON" : "DIM", 21, 10, 1.2) + lamp(62, 17, active ? "#9e501c" : "#b8a992") +
             readout(gain) + label("MON OUT · dB", 58, 6.3, .5, "#584a3d");
     } else if (key === "mute") {
         const states = [["LIVE", accents.up], ["L MUTED", accents.amber], ["R MUTED", accents.amber], ["MUTED", accents.red]];
         const [status, color] = states[muteBits] ?? ["NO LINK", accents.neutral];
-        content = label("MUTE", 23, 10, 1.7) + lamp(36, 37, color) + label(status, 58, 8.7, .9, color);
+        const muted = muteBits === 3;
+        const foreground = muted ? "#fff2dc" : ink;
+        if (muted) face = [bright ? "#d56850" : "#be513c", "#a83c29", "#862917"];
+        content = (phones ? headphones(13, foreground) : label("MUTE", 23, 10, 1.7, foreground)) +
+            lamp(36, 37, muted ? "#ffd19c" : color) + label(status, 58, 8.7, .9, muted ? foreground : color);
     } else if (key === "mono") {
         content = label("MONO", 25, 10, 1.7) + lamp(36, 38, active ? accents.up : "#b8a992") +
             label("LEFT", 57, 8, 1);
@@ -64,13 +74,13 @@ export function keySvg(key, { gain, active, muteBits, bright = false } = {}, siz
         const up = key === "up";
         const color = accents[key];
         const sign = up ? "M48 31h11m-5.5-5.5v11" : "M48 31h11";
-        content = lamp(36, 17, color) +
+        content = (phones ? headphones(8) : lamp(36, 17, color)) +
             '<text x="13" y="36" fill="#30281f" font-family="Arial,sans-serif" font-size="14" font-weight="700" letter-spacing="1.2">VOL</text>' +
             `<path d="${sign}" fill="none" stroke="${ink}" stroke-width="2.25" stroke-linecap="round"/>` +
             levelBar(gain, color);
     }
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 72 72">
-<defs><linearGradient id="face" x2=".14" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="${bright ? "#fff9ed" : "#f3e9d8"}"/><stop offset=".62" stop-color="${ivory}"/><stop offset="1" stop-color="#d3c1a8"/></linearGradient></defs>
+<defs><linearGradient id="face" x2=".14" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="${face[0]}"/><stop offset=".62" stop-color="${face[1]}"/><stop offset="1" stop-color="${face[2]}"/></linearGradient></defs>
 <rect x="1" y="3" width="70" height="68" rx="12" fill="#3d3328"/>
 <rect x="1.5" y="1.5" width="69" height="67" rx="11" fill="#b6a38a" stroke="#fff5e4"/>
 <rect x="4" y="4" width="64" height="62" rx="9" fill="url(#face)" stroke="#8f7d65" stroke-width=".8"/>

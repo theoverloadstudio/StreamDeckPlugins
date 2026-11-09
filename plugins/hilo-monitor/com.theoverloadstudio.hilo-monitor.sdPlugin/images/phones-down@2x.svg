@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 72 72">
+<defs><linearGradient id="face" x2=".14" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#f3e9d8"/><stop offset=".62" stop-color="#e9decc"/><stop offset="1" stop-color="#d3c1a8"/></linearGradient></defs>
+<rect x="1" y="3" width="70" height="68" rx="12" fill="#3d3328"/>
+<rect x="1.5" y="1.5" width="69" height="67" rx="11" fill="#b6a38a" stroke="#fff5e4"/>
+<rect x="4" y="4" width="64" height="62" rx="9" fill="url(#face)" stroke="#8f7d65" stroke-width=".8"/>
+<path d="M10 10q2-3 6-3h39q4 0 6 3" fill="none" stroke="#fff8e9" stroke-width=".9" opacity=".72" stroke-linecap="round"/>
+<path transform="translate(0 8)" d="M28 9V8a8 8 0 0 1 16 0v1M28 8h2v7h-2a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2zm16 0h-2v7h2a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2z" fill="none" stroke="#30281f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><text x="13" y="36" fill="#30281f" font-family="Arial,sans-serif" font-size="14" font-weight="700" letter-spacing="1.2">VOL</text><path d="M48 31h11" fill="none" stroke="#30281f" stroke-width="2.25" stroke-linecap="round"/><g aria-label="Monitor Out level"><rect x="11" y="51" width="50" height="7" rx="3.5" fill="#b9a994"/><path d="M21 52v5m10-5v5m10-5v5m10-5v5" stroke="#e9decc" opacity=".46" stroke-width=".75"/></g>
+</svg>

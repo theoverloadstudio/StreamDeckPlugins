@@ -11,11 +11,11 @@ function harness(t, handle = async () => "ok") {
     const calls = [];
     const faults = [];
     let running = false;
-    attachMonitorActions(socket, {}, async (command, signal, _trim, tiers, onGain) => {
+    attachMonitorActions(socket, {}, async (command, signal, _trim, tiers, onGain, output) => {
         assert.equal(running, false, "hardware calls must not overlap");
         running = true;
-        calls.push({ command, signal, tiers });
-        try { return await handle(command, signal, onGain); }
+        calls.push({ command, signal, tiers, output });
+        try { return await handle(command, signal, onGain, output); }
         finally { running = false; }
     }, error => faults.push(error));
     t.after(() => socket.dispatchEvent(new Event("close")));
@@ -136,11 +136,13 @@ test("visible keys show the verified Hilo level, external mute changes and disco
     event("willAppear", "down");
     await until(() => image("dim", 'aria-label="-22.5 dB"') && image("mute", ">LIVE</text>") &&
         image("up", 'width="38.28"') && image("down", 'width="38.28"'));
+    assert.ok(image("dim", ">DIM ON</text>") && image("dim", "#efbd66"));
     assert.ok(sent.some(x => x.context === "dim" && x.event === "setState" && x.payload.state === 1));
     status = "STATUS 151 3";
     event("dialRotate", "dial", { ticks: 2 });
     await until(() => image("dim", 'aria-label="-20.5 dB"') && image("mute", ">MUTED</text>") &&
         image("up", 'width="39.32"') && image("down", 'width="39.32"'));
+    assert.ok(image("mute", "#a83c29"));
     sent.length = 0;
     status = undefined;
     await until(() => image("dim", "No level available") && image("mute", ">NO LINK</text>"));
@@ -151,6 +153,31 @@ test("visible keys show the verified Hilo level, external mute changes and disco
     const count = calls.length;
     await pause(720);
     assert.equal(calls.length, count, "no status polling with displays hidden");
+});
+
+test("headphone keys use their own hardware state and commands", async t => {
+    const { sent, calls, tap, event } = harness(t, async (command, _signal, onGain, output) => {
+        if (command === "read-status") return output === "phones" ? "STATUS 96 0" : "STATUS 144 3";
+        if (command === "mute") return "Muted";
+        onGain?.(command === "down" ? 92 : 100);
+        return "ok";
+    });
+    const hasImage = (key, fragment) => sent.some(x => x.context === key && x.event === "setImage" &&
+        decodeURIComponent(x.payload.image.slice("data:image/svg+xml,".length)).includes(fragment));
+    event("willAppear", "up");
+    event("willAppear", "phones-up");
+    event("willAppear", "phones-mute");
+    await until(() => hasImage("up", 'width="37.50"') && hasImage("phones-up", 'width="25.00"') &&
+        hasImage("phones-mute", ">LIVE</text>"));
+    tap("phones-up");
+    await until(() => hasImage("phones-up", 'width="26.04"'));
+    assert.equal(hasImage("up", 'width="26.04"'), false);
+    tap("phones-down");
+    await until(() => hasImage("phones-up", 'width="23.96"'));
+    tap("phones-mute");
+    await until(() => hasImage("phones-mute", ">MUTED</text>"));
+    assert.deepEqual(calls.filter(x => x.command !== "read-status").map(x => [x.command, x.output]),
+        [["up", "phones"], ["down", "phones"], ["mute", "phones"]]);
 });
 
 test("a hardware status poll yields immediately to a button press", async t => {

@@ -17,15 +17,16 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     let pending = Promise.resolve();
     let held;
     let active;
-    let muteJobs = 0;
+    const muteJobs = { monitor: 0, phones: 0 };
+    const muting = () => muteJobs.monitor || muteJobs.phones;
     let volumeDirection;
     let volumeGeneration = 0;
     let tapCadence;
     let pendingTap;
     let statusTimer;
     let queuedJobs = 0;
-    let analogGain;
-    let muteBits;
+    const outputs = { monitor: {}, phones: {} };
+    let lastStatusOutput;
     let dimActive = false;
     const downKeys = new Map();
     const pulses = new Map();
@@ -48,28 +49,45 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
 
     function renderStatus() {
         for (const [context, view] of statusKeys) {
+            const { gain, muteBits } = outputs[view.output];
             const bright = pulses.get(context)?.bright ?? false;
-            const signature = view.key === "dim" ? `${analogGain}:${dimActive}` :
-                `${view.key === "mute" ? muteBits : analogGain}:${bright}`;
+            const signature = view.key === "dim" ? `${gain}:${dimActive}` :
+                `${view.key === "mute" ? muteBits : gain}:${bright}`;
             if (view.last === signature) continue;
             view.last = signature;
-            send("setImage", context, { image: keyImage(view.key, { gain: analogGain, active: dimActive, muteBits, bright }) });
+            send("setImage", context, {
+                image: keyImage(view.key, { gain, active: dimActive, muteBits, bright, phones: view.output === "phones" }),
+            });
         }
     }
 
-    function showGain(value) {
+    function showGain(output, value) {
         if (!Number.isInteger(value) || value < 0 || value > 192) return;
-        analogGain = value;
+        outputs[output].gain = value;
         renderStatus();
     }
 
-    function scheduleStatus(delay = statusIntervalMs) {
+    function scheduleStatus(delay, preferredOutput) {
         clearTimeout(statusTimer);
         if (!statusKeys.size || socket.readyState !== WebSocket.OPEN) return;
+        const visible = [...new Set([...statusKeys.values()].map(view => view.output))];
         statusTimer = setTimeout(() => {
-            if (!queuedJobs && !held) enqueue("read-status");
-            else scheduleStatus();
-        }, delay);
+            if (queuedJobs || held) {
+                scheduleStatus();
+                return;
+            }
+            const output = visible.includes(preferredOutput) ? preferredOutput :
+                visible.find(candidate => candidate !== lastStatusOutput) ?? visible[0];
+            lastStatusOutput = output;
+            enqueue("read-status", undefined, undefined, undefined, undefined, output);
+        }, delay ?? statusIntervalMs / visible.length);
+    }
+
+    function dropHiddenStatus() {
+        for (const output of Object.keys(outputs)) {
+            if (![...statusKeys.values()].some(view => view.output === output)) outputs[output] = {};
+        }
+        scheduleStatus();
     }
 
     function startPulse(context) {
@@ -107,30 +125,30 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         if (active && isVolume(active.command)) active.controller.abort();
     }
 
-    function enqueue(command, context, press, trimDb, batch) {
+    function enqueue(command, context, press, trimDb, batch, output = "monitor") {
         const generation = volumeGeneration;
         const expires = performance.now() + volumeInputLifetimeMs;
         if (!isRead(command) && active?.command === "read-status") active.controller.abort();
         queuedJobs++;
-        if (isMute(command)) muteJobs++;
+        if (isMute(command)) muteJobs[output]++;
         const job = pending.then(async () => {
             if (batch && pendingTap === batch) pendingTap = undefined;
             if (socket.readyState !== WebSocket.OPEN || (press && held !== press) ||
-                (muteJobs && !isMute(command)) ||
+                (muting() && !isMute(command)) ||
                 (isVolume(command) && (generation !== volumeGeneration || performance.now() > expires))) return;
             const controller = new AbortController();
-            active = { command, context, controller, press };
+            active = { command, context, controller, press, output };
             try {
                 const result = await adjust(command, controller.signal, trimDb, batch?.tiers,
-                    isVolume(command) && statusKeys.size ? showGain : undefined);
+                    isVolume(command) && statusKeys.size ? value => showGain(output, value) : undefined, output);
                 if (controller.signal.aborted) return;
                 if (command === "read-status") {
                     const match = /^STATUS (\d+) ([0-3])$/.exec(result);
-                    if (!match || Number(match[1]) > 192) throw new Error("Invalid Monitor Out status.");
-                    muteBits = Number(match[2]);
-                    showGain(Number(match[1]));
+                    if (!match || Number(match[1]) > 192) throw new Error("Invalid Hilo output status.");
+                    outputs[output].muteBits = Number(match[2]);
+                    showGain(output, Number(match[1]));
                 } else if (isMute(command) && (result === "Muted" || result === "Unmuted")) {
-                    muteBits = result === "Muted" ? 3 : 0;
+                    outputs[output].muteBits = result === "Muted" ? 3 : 0;
                     renderStatus();
                 }
                 showModeState(result);
@@ -141,7 +159,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         });
         pending = job.catch((error) => {
             if (command === "read-status" && error.name !== "AbortError") {
-                analogGain = muteBits = undefined;
+                outputs[output] = {};
                 renderStatus();
             }
             if (error.name === "AbortError" ||
@@ -154,13 +172,16 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             if (typeof context === "string") send("showAlert", context);
         }).finally(() => {
             queuedJobs--;
-            if (isMute(command)) muteJobs--;
-            if (!queuedJobs) scheduleStatus(command === "read-status" ? statusIntervalMs : 65);
+            if (isMute(command)) muteJobs[output]--;
+            if (!queuedJobs) {
+                if (command === "read-status") scheduleStatus();
+                else scheduleStatus(65, output);
+            }
         });
         return job.catch(() => undefined);
     }
 
-    function tapVolume(direction, context) {
+    function tapVolume(direction, context, output) {
         const now = performance.now();
         const tier = tapCadence?.direction === direction && now - tapCadence.at <= rapidTapMs
             ? Math.min(3, tapCadence.tier + 1) : 1;
@@ -173,7 +194,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         }
         const batch = { tiers: [tier] };
         pendingTap = batch;
-        enqueue(direction, context, undefined, undefined, batch);
+        enqueue(direction, context, undefined, undefined, batch, output);
     }
 
     function scheduleHold(press) {
@@ -181,7 +202,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             if (held !== press) return;
             press.holding = true;
             supersedeVolume();
-            enqueue(`hold-${press.direction}`, press.context, press);
+            enqueue(`hold-${press.direction}`, press.context, press, undefined, undefined, press.output);
         }, holdDelayMs);
     }
 
@@ -196,12 +217,15 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     });
     socket.addEventListener("message", ({ data }) => {
         const { event, action, context, device, payload } = JSON.parse(data);
-        const key = action?.startsWith(`${pluginId}.`) ? action.slice(pluginId.length + 1) : "";
+        const actionKey = action?.startsWith(`${pluginId}.`) ? action.slice(pluginId.length + 1) : "";
+        const output = actionKey.startsWith("phones-") ? "phones" : "monitor";
+        const key = output === "phones" ? actionKey.slice("phones-".length) : actionKey;
+        if (output === "phones" && !["up", "down", "mute"].includes(key)) return;
         if (event === "willAppear") {
             if (["dim", "mute", "up", "down"].includes(key)) {
                 // Remove the old Dim title overlay on keys carried over from v1.9.
                 if (key === "dim") send("setTitle", context, { title: "" });
-                statusKeys.set(context, { key, device });
+                statusKeys.set(context, { key, device, output });
                 renderStatus();
                 scheduleStatus(0);
             }
@@ -216,15 +240,12 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             if (held?.context === context) {
                 const press = held;
                 stopHold();
-                if (event === "keyUp" && !press.holding && performance.now() - press.startedAt < holdDelayMs && !muteJobs) tapVolume(press.direction, context);
+                if (event === "keyUp" && !press.holding && performance.now() - press.startedAt < holdDelayMs && !muting()) tapVolume(press.direction, context, press.output);
             }
             if (event === "willDisappear") {
                 modeKeys.delete(context);
                 statusKeys.delete(context);
-                if (!statusKeys.size) {
-                    clearTimeout(statusTimer);
-                    analogGain = muteBits = undefined;
-                }
+                dropHiddenStatus();
                 if (active?.context === context && isVolume(active.command)) supersedeVolume();
             }
             return;
@@ -233,19 +254,16 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             for (const [key, owner] of downKeys) if (owner === device) releaseKey(key);
             for (const [context, owner] of modeKeys) if (owner.device === device) modeKeys.delete(context);
             for (const [context, owner] of statusKeys) if (owner.device === device) statusKeys.delete(context);
-            if (!statusKeys.size) {
-                clearTimeout(statusTimer);
-                analogGain = muteBits = undefined;
-            }
+            dropHiddenStatus();
             stopHold();
             supersedeVolume();
             return;
         }
         if (event === "dialRotate" && action === `${pluginId}.dial`) {
             const ticks = payload?.ticks;
-            if (!muteJobs && Number.isSafeInteger(ticks) && ticks !== 0) {
+            if (!muting() && Number.isSafeInteger(ticks) && ticks !== 0) {
                 stopHold();
-                supersedeVolume(Math.sign(ticks));
+                supersedeVolume(`monitor:${Math.sign(ticks)}`);
                 tapCadence = undefined;
                 enqueue(Math.max(-10, Math.min(10, ticks)), context);
             }
@@ -263,27 +281,27 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             stopHold();
             supersedeVolume();
             if (active && (modes.includes(active.command) || isRead(active.command))) active.controller.abort();
-            if (!muteJobs) enqueue("mute", context);
-            else if (active?.command === "mute" && muteJobs === 1) {
+            if (!muteJobs[output]) enqueue("mute", context, undefined, undefined, undefined, output);
+            else if (active?.command === "mute" && active.output === output && muteJobs[output] === 1) {
                 active.controller.abort();
-                enqueue("force-mute", context);
+                enqueue("force-mute", context, undefined, undefined, undefined, output);
             }
         } else if (modes.includes(key)) {
-            if (muteJobs) return;
+            if (muting()) return;
             stopHold();
             supersedeVolume();
             enqueue(key, context, undefined, payload?.settings?.monoTrimDb).then((result) => {
                 if (result === undefined && modeKeys.has(context)) enqueue(`read-${key}`, context);
             });
         } else {
-            if (muteJobs) return;
+            if (muting()) return;
             stopHold();
-            supersedeVolume(key === "up" ? 1 : -1);
+            supersedeVolume(`${output}:${key === "up" ? 1 : -1}`);
             if (payload?.isInMultiAction) {
                 tapCadence = undefined;
-                enqueue(key, context);
+                enqueue(key, context, undefined, undefined, undefined, output);
             } else {
-                held = { context, direction: key, holding: false, startedAt: performance.now() };
+                held = { context, direction: key, output, holding: false, startedAt: performance.now() };
                 const press = held;
                 press.limitTimer = setTimeout(() => {
                     if (held === press) stopHold();
