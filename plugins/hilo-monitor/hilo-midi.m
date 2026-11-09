@@ -306,8 +306,8 @@ static BOOL rampDigital(MIDIPortRef output, MIDIEndpointRef destination, int cur
     const useconds_t stepPause = dimming ? 7000 : 10000;
     const int leftRemaining = target[0] - current[0];
     const int rightRemaining = target[1] - current[1];
-    if (dimming && leftRemaining != rightRemaining) {
-        // Catch up the lagging channel before advancing another pair.
+    if (leftRemaining != rightRemaining) {
+        // Attenuate the less dimmed channel so both channels can ramp together.
         const int channel = leftRemaining > rightRemaining ? 0 : 1;
         const int next = current[channel] + abs(leftRemaining - rightRemaining);
         if (cancelled || !setValue(output, destination, monitorDigital[channel], current[channel], next,
@@ -375,10 +375,11 @@ int main(int argc, const char **argv) {
             }
             const int left = targetDigital[0] - expectedDigital[0];
             const int right = targetDigital[1] - expectedDigital[1];
-            // An interrupted pair may be one dB out of sync. Allow the
-            // imbalance to be repaired by lowering, never while raising.
+            // An interrupted pair may be one dB out of sync. The ramp first
+            // attenuates the less dimmed channel, even when restoring.
             if (abs(left) > 30 || abs(right) > 30 ||
-                (left != right && (left < 0 || right < 0 || abs(left - right) > 2))) return 1;
+                (left != right && ((left < 0 && right > 0) || (right < 0 && left > 0) ||
+                    abs(left - right) > 2))) return 1;
         } else if (buttonTap && argc >= 2 && argc <= 4) {
             for (int i = 2; i < argc; i++) {
                 if (argv[i][0] < '1' || argv[i][0] > '3' || argv[i][1]) return 1;

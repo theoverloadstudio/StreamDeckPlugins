@@ -62,8 +62,8 @@ const mono = createMono(runHelper, join(stateDir, "mono.json"));
 attachMonitorActions(
     new WebSocket(`ws://127.0.0.1:${values.port}`),
     { event: values.registerEvent, uuid: values.pluginUUID },
-    (command, signal, trimDb, tapTiers, onGain, output) => {
-        if (command === "dim" || command === "read-dim") return dim(command === "dim", signal);
+    (command, signal, trimDb, tapTiers, onGain, output, dimTarget) => {
+        if (command === "dim" || command === "read-dim") return dim(command === "dim" ? dimTarget ?? true : false, signal);
         if (command === "mono" || command === "read-mono") return mono(command === "mono", signal, trimDb);
         const args = [command, ...(tapTiers ?? [])];
         if (output === "phones") args.unshift("phones");

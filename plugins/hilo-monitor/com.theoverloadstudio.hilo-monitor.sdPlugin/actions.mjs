@@ -28,6 +28,10 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     const outputs = { monitor: {}, phones: {} };
     let lastStatusOutput;
     let dimActive = false;
+    let dimKnown = false;
+    let dimIntent;
+    let dimRead;
+    let dimPressPending = false;
     const downKeys = new Map();
     const pulses = new Map();
     const modeKeys = new Map();
@@ -40,7 +44,10 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
     function showModeState(result) {
         const match = /^(Dim|Mono) (On|Off)$/.exec(result);
         if (!match) return;
-        if (match[1] === "Dim") dimActive = match[2] === "On";
+        if (match[1] === "Dim") {
+            dimActive = match[2] === "On";
+            dimKnown = true;
+        }
         for (const [context, { key }] of modeKeys) {
             if (key === match[1].toLowerCase()) send("setState", context, { state: match[2] === "On" ? 1 : 0 });
         }
@@ -51,12 +58,13 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         for (const [context, view] of statusKeys) {
             const { gain, muteBits } = outputs[view.output];
             const bright = pulses.get(context)?.bright ?? false;
-            const signature = view.key === "dim" ? `${gain}:${dimActive}` :
+            const transition = view.key === "dim" ? dimIntent?.target : undefined;
+            const signature = view.key === "dim" ? `${gain}:${dimActive}:${transition}` :
                 `${view.key === "mute" ? muteBits : gain}:${bright}`;
             if (view.last === signature) continue;
             view.last = signature;
             send("setImage", context, {
-                image: keyImage(view.key, { gain, active: dimActive, muteBits, bright, phones: view.output === "phones" }),
+                image: keyImage(view.key, { gain, active: dimActive, transition, muteBits, bright, phones: view.output === "phones" }),
             });
         }
     }
@@ -125,7 +133,7 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         if (active && isVolume(active.command)) active.controller.abort();
     }
 
-    function enqueue(command, context, press, trimDb, batch, output = "monitor") {
+    function enqueue(command, context, press, trimDb, batch, output = "monitor", intent) {
         const generation = volumeGeneration;
         const expires = performance.now() + volumeInputLifetimeMs;
         if (!isRead(command) && active?.command === "read-status") active.controller.abort();
@@ -134,13 +142,14 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         const job = pending.then(async () => {
             if (batch && pendingTap === batch) pendingTap = undefined;
             if (socket.readyState !== WebSocket.OPEN || (press && held !== press) ||
+                (intent && dimIntent !== intent) ||
                 (muting() && !isMute(command)) ||
                 (isVolume(command) && (generation !== volumeGeneration || performance.now() > expires))) return;
             const controller = new AbortController();
             active = { command, context, controller, press, output };
             try {
                 const result = await adjust(command, controller.signal, trimDb, batch?.tiers,
-                    isVolume(command) && statusKeys.size ? value => showGain(output, value) : undefined, output);
+                    isVolume(command) && statusKeys.size ? value => showGain(output, value) : undefined, output, intent?.target);
                 if (controller.signal.aborted) return;
                 if (command === "read-status") {
                     const match = /^STATUS (\d+) ([0-3])$/.exec(result);
@@ -179,6 +188,41 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             }
         });
         return job.catch(() => undefined);
+    }
+
+    function readDim(context) {
+        if (dimRead) return;
+        dimRead = enqueue("read-dim", context).then(result => {
+            dimRead = undefined;
+            const pressed = dimPressPending;
+            dimPressPending = false;
+            if (pressed && result && socket.readyState === WebSocket.OPEN) pressDim(context);
+            else if (pressed && typeof context === "string") send("showAlert", context);
+        });
+    }
+
+    function pressDim(context) {
+        stopHold();
+        supersedeVolume();
+        if (!dimKnown) {
+            dimPressPending = !dimPressPending;
+            readDim(context);
+            return;
+        }
+        const wasOn = dimIntent ? dimIntent.target === "on" : dimActive;
+        const intent = { target: wasOn ? "off" : "on" };
+        dimIntent = intent;
+        if (active?.command === "dim") active.controller.abort();
+        renderStatus();
+        enqueue("dim", context, undefined, undefined, undefined, "monitor", intent).then(result => {
+            if (dimIntent !== intent) return;
+            dimIntent = undefined;
+            renderStatus();
+            if (!result) {
+                dimKnown = false;
+                if (modeKeys.has(context)) readDim(context);
+            }
+        });
     }
 
     function tapVolume(direction, context, output) {
@@ -231,7 +275,8 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
             }
             if (modes.includes(key)) {
                 modeKeys.set(context, { key, device });
-                enqueue(`read-${key}`, context);
+                if (key === "dim") readDim(context);
+                else enqueue(`read-${key}`, context);
             }
             return;
         }
@@ -271,6 +316,11 @@ export function attachMonitorActions(socket, registration, adjust, reportError) 
         }
         if (event !== "keyDown") return;
 
+        // Dim is a toggle on keyDown. It has no held gesture to release.
+        if (key === "dim") {
+            pressDim(context);
+            return;
+        }
         if (!["up", "down", "mute", ...modes].includes(key) || downKeys.has(context)) return;
         if (!payload?.isInMultiAction && typeof context === "string") {
             downKeys.set(context, device);

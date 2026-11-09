@@ -23,7 +23,7 @@ export function createDim(run, stateFile) {
         }
     }
 
-    return async (toggle, signal) => {
+    return async (request, signal) => {
         let normal, phase;
         try {
             const saved = JSON.parse(await readFile(stateFile, "utf8"));
@@ -36,41 +36,43 @@ export function createDim(run, stateFile) {
         } catch (error) {
             if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
         }
-        if (!toggle && !normal) return "Dim Off";
+        if (!request && !normal) return "Dim Off";
 
         const current = (await run(["read-digital"], signal)).split(" ").map(Number);
         if (!validLevels(current)) throw new Error("Cannot read the Monitor Out digital levels.");
         const on = normal && !equal(normal, current) && equal(dimmed(normal), current);
-        if (!toggle) return on ? "Dim On" : "Dim Off";
+        if (!request) return on ? "Dim On" : "Dim Off";
 
-        if (on) {
-            await save(normal, "restoring");
-            await run(["set-digital", ...current, ...normal], signal);
-            await rm(stateFile, { force: true });
-            return "Dim Off";
-        }
-        if (normal && !equal(normal, current)) {
+        if (normal && !on && !equal(normal, current)) {
             const target = dimmed(normal);
             const offsets = current.map((value, channel) => value - normal[channel]);
-            if (phase !== "on" && current.every((value, channel) => value >= normal[channel] && value <= target[channel]) &&
-                Math.abs(offsets[0] - offsets[1]) <= 2) {
-                // After interruption, finish dimming first. An explicit
-                // second press can then bring both channels back up together.
-                await save(normal, "applying");
-                await run(["set-digital", ...current, ...target], signal);
-                await save(normal, "on");
-                return "Dim On";
+            const interrupted = phase !== "on" &&
+                current.every((value, channel) => value >= normal[channel] && value <= target[channel]) &&
+                Math.abs(offsets[0] - offsets[1]) <= 2;
+            if (!interrupted) {
+                // An unrelated hardware change must never restore an old level.
+                await rm(stateFile, { force: true });
+                throw new Error("Monitor Out digital levels changed. Press Dim again to use the current levels.");
             }
-            // An unrelated hardware change must never restore an old level.
-            await rm(stateFile, { force: true });
-            throw new Error("Monitor Out digital levels changed. Press Dim again to use the current levels.");
         }
-        const target = dimmed(current);
-        if (equal(target, current)) throw new Error("Monitor Out digital level is already at its minimum.");
+
         signal.throwIfAborted();
-        await save(current, "applying");
+        const engage = request === true ? !on : request === "on";
+        if (!engage) {
+            if (normal && !equal(normal, current)) {
+                await save(normal, "restoring");
+                await run(["set-digital", ...current, ...normal], signal);
+            }
+            if (normal) await rm(stateFile, { force: true });
+            return "Dim Off";
+        }
+        if (on) return "Dim On";
+        normal ??= current;
+        const target = dimmed(normal);
+        if (equal(target, current)) throw new Error("Monitor Out digital level is already at its minimum.");
+        await save(normal, "applying");
         await run(["set-digital", ...current, ...target], signal);
-        await save(current, "on");
+        await save(normal, "on");
         return "Dim On";
     };
 }

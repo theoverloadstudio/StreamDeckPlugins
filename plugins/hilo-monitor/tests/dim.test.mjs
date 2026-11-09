@@ -33,3 +33,28 @@ test("an interrupted 1 dB Dim step can be completed and then restored", async t 
     assert.equal(await dim(true, signal), "Dim Off");
     assert.deepEqual(levels, [24, 28]);
 });
+
+test("an explicit Off restores the original levels from a partially engaged fade", async t => {
+    const dir = await mkdtemp(join(tmpdir(), "hilo-dim-reverse-test-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    let levels = [24, 28];
+    let interrupt = true;
+    const run = async ([command, ...args]) => {
+        if (command === "read-digital") return levels.join(" ");
+        assert.equal(command, "set-digital");
+        assert.deepEqual(args.slice(0, 2), levels);
+        if (interrupt) {
+            interrupt = false;
+            levels = [36, 38];
+            throw new Error("Interrupted during a pair");
+        }
+        levels = args.slice(2);
+        return levels.join(" ");
+    };
+    const dim = createDim(run, join(dir, "dim.json"));
+    const signal = new AbortController().signal;
+    await assert.rejects(dim("on", signal), /Interrupted/);
+    assert.equal(await dim("off", signal), "Dim Off");
+    assert.deepEqual(levels, [24, 28]);
+    assert.equal(await dim(false, signal), "Dim Off");
+});

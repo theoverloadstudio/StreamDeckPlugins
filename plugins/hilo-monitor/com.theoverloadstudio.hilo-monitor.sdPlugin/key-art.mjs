@@ -52,12 +52,15 @@ function levelBar(gain, color) {
     return `<g aria-label="Monitor Out level"><rect x="11" y="51" width="50" height="7" rx="3.5" fill="#b9a994"/>${width ? `<rect x="11" y="51" width="${width.toFixed(2)}" height="7" rx="${Math.min(3.5, width / 2)}" fill="${color}"/>` : ""}<path d="M21 52v5m10-5v5m10-5v5m10-5v5" stroke="${ivory}" opacity=".46" stroke-width=".75"/></g>`;
 }
 
-export function keySvg(key, { gain, active, muteBits, phones = false, bright = false } = {}, size = 144) {
+export function keySvg(key, { gain, active, transition, muteBits, phones = false, bright = false } = {}, size = 144) {
     let content;
     let face = [bright ? "#fff9ed" : "#f3e9d8", ivory, "#d3c1a8"];
     if (key === "dim") {
-        if (active) face = ["#ffdf98", "#efbd66", "#d4913b"];
-        content = label(active ? "DIM ON" : "DIM", 21, 10, 1.2) + lamp(62, 17, active ? "#9e501c" : "#b8a992") +
+        const lit = transition ? transition === "on" : active;
+        if (lit) face = ["#ffdf98", "#efbd66", "#d4913b"];
+        const name = transition === "on" ? "DIMMING" : transition === "off" ? "RESTORE" : active ? "DIM ON" : "DIM";
+        content = label(name, 21, transition ? 8.5 : 10, transition ? .7 : 1.2) +
+            lamp(62, 17, lit ? "#9e501c" : "#b8a992") +
             readout(gain) + label("MON OUT · dB", 58, 6.3, .5, "#584a3d");
     } else if (key === "mute") {
         const states = [["ON", accents.up], ["L MUTED", accents.amber], ["R MUTED", accents.amber], ["MUTED", accents.red]];

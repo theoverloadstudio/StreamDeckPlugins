@@ -11,11 +11,11 @@ function harness(t, handle = async () => "ok") {
     const calls = [];
     const faults = [];
     let running = false;
-    attachMonitorActions(socket, {}, async (command, signal, _trim, tiers, onGain, output) => {
+    attachMonitorActions(socket, {}, async (command, signal, _trim, tiers, onGain, output, dimTarget) => {
         assert.equal(running, false, "hardware calls must not overlap");
         running = true;
-        calls.push({ command, signal, tiers, output });
-        try { return await handle(command, signal, onGain, output); }
+        calls.push({ command, signal, tiers, output, dimTarget });
+        try { return await handle(command, signal, onGain, output, dimTarget); }
         finally { running = false; }
     }, error => faults.push(error));
     t.after(() => socket.dispatchEvent(new Event("close")));
@@ -191,4 +191,44 @@ test("a hardware status poll yields immediately to a button press", async t => {
     await until(() => calls.some(x => x.command === "mute"));
     assert.equal(calls[0].command, "read-status");
     assert.equal(calls[0].signal.aborted, true);
+});
+
+test("quick Dim presses reverse the running fade without relying on keyUp", async t => {
+    const { calls, sent, event } = harness(t, async (command, signal, _gain, _output, target) => {
+        if (command === "read-dim") return "Dim Off";
+        if (command === "read-status") return "STATUS 119 0";
+        if (target === "on") await pause(1000, undefined, { signal });
+        return target === "off" ? "Dim Off" : "Dim On";
+    });
+    const labels = text => sent.some(item => item.event === "setImage" && item.context === "dim" &&
+        decodeURIComponent(item.payload.image.slice("data:image/svg+xml,".length)).includes(">" + text + "</text>"));
+    event("willAppear", "dim");
+    event("keyDown", "dim");
+    await until(() => calls.some(call => call.dimTarget === "on"));
+    assert.ok(labels("DIMMING"));
+    sent.length = 0;
+    event("keyDown", "dim");
+    await until(() => labels("DIM"));
+    assert.ok(labels("RESTORE"));
+    assert.deepEqual(calls.filter(call => call.command === "dim").map(call => [call.dimTarget, call.signal.aborted]),
+        [["on", true], ["off", false]]);
+});
+
+test("only the latest Dim intent runs when several presses arrive before a fade completes", async t => {
+    const { calls, sent, event, tap } = harness(t, async (command, signal, _gain, _output, target) => {
+        if (command === "read-dim") return "Dim Off";
+        if (command === "read-status") return "STATUS 119 0";
+        await pause(60, undefined, { signal });
+        return target === "on" ? "Dim On" : "Dim Off";
+    });
+    event("willAppear", "dim");
+    tap("dim");
+    await until(() => calls.some(call => call.dimTarget === "on"));
+    tap("dim");
+    tap("dim");
+    tap("dim");
+    await until(() => sent.some(item => item.event === "setImage" && item.context === "dim" &&
+        decodeURIComponent(item.payload.image.slice("data:image/svg+xml,".length)).includes(">DIM</text>") &&
+        calls.some(call => call.dimTarget === "off")));
+    assert.deepEqual(calls.filter(call => call.command === "dim").map(call => call.dimTarget), ["on", "off"]);
 });
