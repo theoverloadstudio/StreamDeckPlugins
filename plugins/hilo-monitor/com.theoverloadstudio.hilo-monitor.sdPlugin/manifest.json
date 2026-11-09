@@ -36,7 +36,7 @@
       "Tooltip": "Turn to adjust Analog Monitor Out in 0.5 dB steps.",
       "Controllers": ["Encoder"],
       "Encoder": {
-        "Icon": "images/action",
+        "Icon": "images/dial",
         "layout": "$B1",
         "TriggerDescription": { "Rotate": "Adjust Monitor Out" }
       },
